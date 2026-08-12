@@ -288,6 +288,8 @@ The algorithm parameters in `params.yaml` can usually be left at their defaults.
 </details>
 
 # Acknowledgements
+For a full SLAM integration including loop-closure detection and pose-graph optimization check out [BIEVR-LIO-SLAM](https://github.com/S0UL4/BIEVR-LIO-SLAM), contributed by [SOUL4](https://github.com/S0UL4)
+
 We thank the authors of [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry), [Wavemap](https://github.com/ethz-asl/wavemap) and [UGPM](https://github.com/UTS-RI/ugpm) for open-sourcing their works that served as an inspiration for us.
 We used [ascii-image-converter](https://github.com/TheZoraiz/ascii-image-converter) for our ascii art.
 
