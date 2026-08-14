@@ -272,26 +272,32 @@ tunnel-degeneracy indicators are the translation block columns:
 The metrics pass only observes the final Hessian. It does not project, clamp, or otherwise change
 the LM update.
 
-### Experimental weakest-translation hard projection
+### Experimental weakest-translation attenuation
 
 The first degeneracy-aware ablation can be enabled in `config/params.yaml`:
 
 ```yaml
 optimization:
   hard_project_weakest_translation: True
+  weak_translation_retention_alpha: 0.1
   translation_degeneracy_ratio_threshold: 0.05
 ```
 
 For every LM outer iteration, the translation block is decomposed as
 `Htt = V * Lambda * V^T`. When `lambda_min / lambda_max` is below the configured threshold, the
-translation increment is replaced by `(I - v_weak * v_weak^T) * dt`. Rotation and the other two
-translation directions are unchanged. The threshold is an initial Tunnel-D experimental value, not
-a sensor- or environment-independent constant.
+translation increment is replaced by
+`(I - (1 - alpha) * v_weak * v_weak^T) * dt`. Thus `alpha=0` reproduces the original hard
+projection, while `alpha=1` leaves the LM translation increment unchanged. Rotation and the other
+two translation directions are unchanged. The threshold is an initial Tunnel-D experimental value,
+not a sensor- or environment-independent constant.
 
-CSV schema version 2 adds LM trial/rejection counts plus `hard_projection_*` columns. In particular,
+CSV schema version 3 adds `hard_projection_retention_alpha` and the weak-direction magnitude before
+attenuation. In particular,
 `hard_projection_accepted_removed_abs_max_m` records the largest weak-direction component removed
-from an accepted step, while `hard_projection_accepted_weak_after_abs_max_m` should remain near
-floating-point zero. Set `hard_project_weakest_translation: False` for the unmodified baseline.
+from an accepted step. For a fixed alpha,
+`hard_projection_accepted_weak_after_abs_max_m / hard_projection_accepted_weak_before_abs_max_m`
+should equal alpha up to floating-point error. Set `hard_project_weakest_translation: False` for the
+unmodified baseline.
 
 ## Configuration
 

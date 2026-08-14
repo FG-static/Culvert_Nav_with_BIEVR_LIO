@@ -442,8 +442,10 @@ void Pipeline::writeRegistrationMetricsHeader() {
   std::ofstream& out = *registration_metrics_log_;
   out << "schema_version,stamp_ns,stamp_s,frame_id,diagnostics_valid,lm_converged,lm_iterations,"
          "lm_trial_steps,lm_rejected_steps,hard_projection_enabled,"
-         "hard_projection_ratio_threshold,hard_projection_trial_steps,"
+         "hard_projection_retention_alpha,hard_projection_ratio_threshold,"
+         "hard_projection_trial_steps,"
          "hard_projection_accepted_steps,hard_projection_accepted_removed_abs_sum_m,"
+         "hard_projection_accepted_weak_before_abs_max_m,"
          "hard_projection_accepted_removed_abs_max_m,"
          "hard_projection_accepted_weak_after_abs_max_m,"
          "frame_time_ms,registration_time_ms,undistorted_points,selected_points,fine_points,"
@@ -486,15 +488,17 @@ void Pipeline::logRegistrationMetrics(uint64_t stamp_ns, uint32_t frame_id,
 
   std::ofstream& out = *registration_metrics_log_;
   out << std::setprecision(17);
-  out << 2 << ',' << stamp_ns << ',' << nsToS(stamp_ns) << ',' << frame_id << ','
+  out << 3 << ',' << stamp_ns << ',' << nsToS(stamp_ns) << ',' << frame_id << ','
       << static_cast<int>(diagnostics.valid) << ',' << static_cast<int>(diagnostics.converged) << ','
       << diagnostics.iterations << ',' << diagnostics.lm_trial_steps << ','
       << diagnostics.lm_rejected_steps << ','
       << static_cast<int>(diagnostics.hard_projection_enabled) << ','
+      << diagnostics.weak_translation_retention_alpha << ','
       << diagnostics.hard_projection_ratio_threshold << ','
       << diagnostics.hard_projection_trial_steps << ','
       << diagnostics.hard_projection_accepted_steps << ','
       << diagnostics.hard_projection_accepted_removed_abs_sum_m << ','
+      << diagnostics.hard_projection_accepted_weak_before_abs_max_m << ','
       << diagnostics.hard_projection_accepted_removed_abs_max_m << ','
       << diagnostics.hard_projection_accepted_weak_after_abs_max_m << ',' << frame_time_ms << ','
       << registration_time_ms << ','

@@ -14,12 +14,14 @@ preprocess:
 
 optimization:
   huber_delta: 0.1 # Huber norm threshold
-  # Experimental Tunnel-D ablation: remove the weakest Htt-direction translation update.
+  # Experimental Tunnel-D ablation: attenuate the weakest Htt-direction translation update.
   hard_project_weakest_translation: True
-  # Project only when lambda_min(Htt) / lambda_max(Htt) is below this threshold.
+  # Retain alpha times the weak-direction update: 0 = hard projection, 1 = original LM update.
+  weak_translation_retention_alpha: 1.0 # 该改进已失败
+  # Attenuate only when lambda_min(Htt) / lambda_max(Htt) is below this threshold.
   translation_degeneracy_ratio_threshold: 0.05
 
-imu:  
+imu:
     window_s: 10 # Time window for the inertial optimization [s]
     t_init: 0.2 # Time to initialize bias and gravity [s]
     frame: "imu"

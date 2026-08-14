@@ -165,6 +165,8 @@ inline void printConfigOverview(const Config& config) {
   os << "  img_jacobian:         " << yn(hc.registration.img_jacobian) << "\n";
   os << "  hard_project_weakest_translation: "
      << yn(hc.registration.hard_project_weakest_translation) << "\n";
+  os << "  weak_translation_retention_alpha: "
+     << hc.registration.weak_translation_retention_alpha << "\n";
   os << "  translation_degeneracy_ratio_threshold: "
      << hc.registration.translation_degeneracy_ratio_threshold << "\n";
   os << "imu:\n";
@@ -256,6 +258,14 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.registration.img_jacobian = yaml.get<bool>("optimization", "img_jacobian", true);
   hc.registration.hard_project_weakest_translation =
       yaml.get<bool>("optimization", "hard_project_weakest_translation", false);
+  hc.registration.weak_translation_retention_alpha =
+      yaml.get<double>("optimization", "weak_translation_retention_alpha", 0.0);
+  if (!(hc.registration.weak_translation_retention_alpha >= 0.0 &&
+        hc.registration.weak_translation_retention_alpha <= 1.0)) {
+    LOG(E, "Config error: 'optimization.weak_translation_retention_alpha' must be in [0, 1], got "
+               << hc.registration.weak_translation_retention_alpha << ".");
+    return false;
+  }
   if (hc.registration.translation_degeneracy_ratio_threshold > 1.0) {
     LOG(E, "Config error: 'optimization.translation_degeneracy_ratio_threshold' must be <= 1, got "
                << hc.registration.translation_degeneracy_ratio_threshold << ".");
