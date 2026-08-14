@@ -197,6 +197,19 @@ void LsqRegistration::updateDiagnostics(const Matrix66& H, const Vector6& b,
   diagnostics_.robust_cost = statistics.error_sum;
   diagnostics_.weight_sum = statistics.weight_sum;
   diagnostics_.gradient_norm = b.norm();
+  diagnostics_.hard_projection_enabled = config_.hard_project_weakest_translation;
+  diagnostics_.hard_projection_ratio_threshold =
+      config_.translation_degeneracy_ratio_threshold;
+  diagnostics_.lm_trial_steps = lm_trial_steps_;
+  diagnostics_.lm_rejected_steps = lm_rejected_steps_;
+  diagnostics_.hard_projection_trial_steps = hard_projection_trial_steps_;
+  diagnostics_.hard_projection_accepted_steps = hard_projection_accepted_steps_;
+  diagnostics_.hard_projection_accepted_removed_abs_sum_m =
+      hard_projection_accepted_removed_abs_sum_m_;
+  diagnostics_.hard_projection_accepted_removed_abs_max_m =
+      hard_projection_accepted_removed_abs_max_m_;
+  diagnostics_.hard_projection_accepted_weak_after_abs_max_m =
+      hard_projection_accepted_weak_after_abs_max_m_;
 
   if (!points_j_.empty()) {
     diagnostics_.effective_ratio =
@@ -269,23 +282,61 @@ bool LsqRegistration::stepLm(Transform& x0, Transform& delta) {
   Vector6 b;
   double y0 = linearize(x0, &H, &b);
 
+  bool hard_projection_active = false;
+  V3 weakest_translation_direction = V3::Zero();
+  if (config_.hard_project_weakest_translation) {
+    const M3 H_translation = H.bottomRightCorner<3, 3>(); // 从完整 6*6 Hessian 取出 H_{tt}
+    const M3 H_translation_symmetric = 0.5 * (H_translation + H_translation.transpose()); // 强制构造对称矩阵，弥补小数点精度误差
+    Eigen::SelfAdjointEigenSolver<M3> translation_solver(H_translation_symmetric);
+    if (translation_solver.info() == Eigen::Success) {
+      const V3 eigenvalues = translation_solver.eigenvalues(); // 特征值
+      const double lambda_min = std::max(0.0, eigenvalues(0));
+      const double lambda_max = std::max(0.0, eigenvalues(2));
+      if (lambda_max > 0.0) {
+        const double ratio = lambda_min / lambda_max;
+        if (ratio < config_.translation_degeneracy_ratio_threshold) { // 退化程度比达到阈值
+          weakest_translation_direction = translation_solver.eigenvectors().col(0); // 取最小特征值对应的特征向量
+          hard_projection_active = true; // 标志硬投影开始
+        }
+      }
+    }
+  }
+
   if (lm_lambda_ < 0.0) {
     lm_lambda_ = config_.lm_init_lambda_factor * H.diagonal().array().abs().maxCoeff();
   }
 
   double nu = 2.0;
+  // 开始LM求解
   for (int i = 0; i < config_.lm_max_iterations; i++) {
-    Eigen::LDLT<Matrix66> solver(H + lm_lambda_ * Matrix66::Identity());
-    Vector6 d = solver.solve(-b);
+    ++lm_trial_steps_;
+    Eigen::LDLT<Matrix66> solver(H + lm_lambda_ * Matrix66::Identity()); // 防奇异法求解 6DoF 位姿增量
+    Vector6 d = solver.solve(-b); // d = [ d_rotation ; d_translation ]
+
+    // 开始硬投影处理 LM 解
+    bool hard_projection_applied = false;
+    double weak_translation_before = 0.0;
+    double weak_translation_after = 0.0;
+    if (hard_projection_active) {
+      ++hard_projection_trial_steps_;
+      V3 translation = d.tail<3>();
+      weak_translation_before = weakest_translation_direction.dot(translation);
+      translation -= weakest_translation_direction * weak_translation_before;
+      weak_translation_after = weakest_translation_direction.dot(translation);
+      d.tail<3>() = translation;
+      hard_projection_applied = true;
+    }
+
     delta.setIdentity();
     delta.linear() = so3_exp(d.head<3>()).toRotationMatrix();
     delta.translation() = d.tail<3>();
 
     Transform xi = x0 * delta;
     double yi = linearize(xi);
-    double rho = (y0 - yi) / (d.dot(lm_lambda_ * d - b));
+    double rho = (y0 - yi) / (d.dot(lm_lambda_ * d - b)); // 模型线性化程度
 
     if (rho < 0) {
+      ++lm_rejected_steps_;
       if (isConverged(delta)) {
         return true;
       }
@@ -293,6 +344,18 @@ bool LsqRegistration::stepLm(Transform& x0, Transform& delta) {
       lm_lambda_ *= nu;
       nu *= 2;
       continue;
+    }
+
+    // 记录投影效果
+    if (hard_projection_applied) {
+      ++hard_projection_accepted_steps_;
+      const double removed_abs = std::abs(weak_translation_before);
+      hard_projection_accepted_removed_abs_sum_m_ += removed_abs;
+      hard_projection_accepted_removed_abs_max_m_ =
+          std::max(hard_projection_accepted_removed_abs_max_m_, removed_abs);
+      hard_projection_accepted_weak_after_abs_max_m_ =
+          std::max(hard_projection_accepted_weak_after_abs_max_m_,
+                   std::abs(weak_translation_after));
     }
 
     x0 = xi;

@@ -163,6 +163,10 @@ inline void printConfigOverview(const Config& config) {
   os << "  huber_delta:          " << hc.registration.huber_delta << "\n";
   os << "  img_residual:         " << yn(hc.registration.img_residual) << "\n";
   os << "  img_jacobian:         " << yn(hc.registration.img_jacobian) << "\n";
+  os << "  hard_project_weakest_translation: "
+     << yn(hc.registration.hard_project_weakest_translation) << "\n";
+  os << "  translation_degeneracy_ratio_threshold: "
+     << hc.registration.translation_degeneracy_ratio_threshold << "\n";
   os << "imu:\n";
   os << "  window_s:             " << hc.imu.window_length_s << "\n";
   os << "  t_init:               " << hc.imu.t_init << "\n";
@@ -242,11 +246,21 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
 
   // --- optimization ---
   if (!config_internal::getPositive(yaml, "optimization", "huber_delta", 100.,
-                                    hc.registration.huber_delta)) {
+                                    hc.registration.huber_delta) ||
+      !config_internal::getPositive(
+          yaml, "optimization", "translation_degeneracy_ratio_threshold", 0.05,
+          hc.registration.translation_degeneracy_ratio_threshold)) {
     return false;
   }
   hc.registration.img_residual = yaml.get<bool>("optimization", "img_residual", true);
   hc.registration.img_jacobian = yaml.get<bool>("optimization", "img_jacobian", true);
+  hc.registration.hard_project_weakest_translation =
+      yaml.get<bool>("optimization", "hard_project_weakest_translation", false);
+  if (hc.registration.translation_degeneracy_ratio_threshold > 1.0) {
+    LOG(E, "Config error: 'optimization.translation_degeneracy_ratio_threshold' must be <= 1, got "
+               << hc.registration.translation_degeneracy_ratio_threshold << ".");
+    return false;
+  }
 
   // --- imu (params side: inertial window + normalization) ---
   if (!config_internal::getPositive(yaml, "imu", "window_s", 10., hc.imu.window_length_s) ||

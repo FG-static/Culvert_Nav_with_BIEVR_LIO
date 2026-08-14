@@ -22,6 +22,10 @@ struct RegistrationConfig {
   bool lm_debug_print = false;
   bool img_residual = true;
   bool img_jacobian = true;
+  // Experimental hard projection: when the translation Hessian is sufficiently
+  // anisotropic, remove the LM translation increment along its weakest axis.
+  bool hard_project_weakest_translation = false;
+  double translation_degeneracy_ratio_threshold = 0.05;
   // Re-linearize once at the final pose and retain Hessian diagnostics. This is
   // enabled by Pipeline only when a registration-metrics output file is open.
   bool collect_diagnostics = false;
@@ -227,6 +231,16 @@ struct RegistrationDiagnostics {
   double translation_condition_number = 0.0;
   double translation_degeneracy_ratio = 0.0;
   double weakest_translation_information_per_point = 0.0;
+
+  bool hard_projection_enabled = false;
+  double hard_projection_ratio_threshold = 0.0;
+  int lm_trial_steps = 0;
+  int lm_rejected_steps = 0;
+  int hard_projection_trial_steps = 0;
+  int hard_projection_accepted_steps = 0;
+  double hard_projection_accepted_removed_abs_sum_m = 0.0;
+  double hard_projection_accepted_removed_abs_max_m = 0.0;
+  double hard_projection_accepted_weak_after_abs_max_m = 0.0;
 };
 
 class LsqRegistration {
@@ -264,6 +278,13 @@ class LsqRegistration {
   bool converged_ = false;
   int num_iterations_ = 0;
   int num_effective_points_ = 0;
+  int lm_trial_steps_ = 0;
+  int lm_rejected_steps_ = 0;
+  int hard_projection_trial_steps_ = 0;
+  int hard_projection_accepted_steps_ = 0;
+  double hard_projection_accepted_removed_abs_sum_m_ = 0.0;
+  double hard_projection_accepted_removed_abs_max_m_ = 0.0;
+  double hard_projection_accepted_weak_after_abs_max_m_ = 0.0;
   RegistrationDiagnostics diagnostics_;
 };
 
