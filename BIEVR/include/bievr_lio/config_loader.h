@@ -178,6 +178,8 @@ inline void printConfigOverview(const Config& config) {
        << (hc.dashboard_ascii_path.empty() ? "<none>" : hc.dashboard_ascii_path) << "\n";
   }
   os << "  log_path:             " << (hc.log_path.empty() ? "<none>" : hc.log_path) << "\n";
+  os << "  registration_metrics_path: "
+     << (hc.registration_metrics_path.empty() ? "<none>" : hc.registration_metrics_path) << "\n";
   os << "calibration (LiDAR -> IMU):\n";
   printExtrinsic(os, "T_I_L", hc.T_I_L);
   os << "==================================================";
@@ -262,6 +264,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.print_timing = yaml.get<bool>("debug", "timing", false);
   hc.print_debug = yaml.get<bool>("debug", "log", false);
   hc.log_path = yaml.get<std::string>("debug", "trajectory_path", "");
+  hc.registration_metrics_path =
+      yaml.get<std::string>("debug", "registration_metrics_path", "");
 
   // --- dashboard (live status print) ---
   hc.print_dashboard = yaml.get<bool>("debug", "dashboard", false);
@@ -316,13 +320,16 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
 // passes the YAML paths as argv rather than ROS parameters, so this is fully
 // ROS-agnostic and shared by both wrappers). Recognised flags:
 //   --sensor_config_file <path>   --params_file <path>   --bag <path>
+//   --registration_metrics <path>
 // `args` is the argument list with any ROS-specific arguments already stripped
 // (ros::init does this in place on ROS1; rclcpp::remove_ros_arguments on ROS2).
 inline bool loadConfigFromArgs(const std::vector<std::string>& args, Config& config) {
   std::string sensor_config_file;
   std::string params_file;
   std::string bag_path;
+  std::string registration_metrics_path;
   bool have_bag = false;
+  bool have_registration_metrics = false;
 
   for (size_t i = 1; i < args.size(); ++i) {
     auto value = [&](const char* flag) -> std::string {
@@ -339,6 +346,9 @@ inline bool loadConfigFromArgs(const std::vector<std::string>& args, Config& con
     } else if (args[i] == "--bag") {
       bag_path = value("--bag");
       have_bag = true;
+    } else if (args[i] == "--registration_metrics") {
+      registration_metrics_path = value("--registration_metrics");
+      have_registration_metrics = true;
     } else {
       LOG(W, "Ignoring unrecognized argument '" << args[i] << "'.");
     }
@@ -353,6 +363,9 @@ inline bool loadConfigFromArgs(const std::vector<std::string>& args, Config& con
   // override the config value when it was actually passed on the command line.
   if (have_bag) {
     config.topic_config.bag_path = bag_path;
+  }
+  if (have_registration_metrics) {
+    config.pipeline_config.registration_metrics_path = registration_metrics_path;
   }
   return true;
 }

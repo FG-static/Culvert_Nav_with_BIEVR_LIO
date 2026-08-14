@@ -24,9 +24,17 @@ def resolve_config(value, subdir):
 def launch_setup(context, *args, **kwargs):
     sensor_config = LaunchConfiguration('sensor_config').perform(context)
     params = LaunchConfiguration('params').perform(context)
+    registration_metrics = LaunchConfiguration('registration_metrics').perform(context)
 
     rviz_config = os.path.join(
         get_package_share_directory('bievr_lio_ros2'), 'rviz', 'config.rviz')
+
+    node_arguments = [
+        '--sensor_config_file', resolve_config(sensor_config, 'sensor_configs'),
+        '--params_file', resolve_config(params, ''),
+    ]
+    if registration_metrics:
+        node_arguments.extend(['--registration_metrics', registration_metrics])
 
     return [
         Node(
@@ -36,10 +44,7 @@ def launch_setup(context, *args, **kwargs):
             output='screen',
             # Pass only the YAML config-file *paths* as command-line arguments;
             # the node parses them with yaml-cpp (the same plain files ROS1 uses).
-            arguments=[
-                '--sensor_config_file', resolve_config(sensor_config, 'sensor_configs'),
-                '--params_file', resolve_config(params, ''),
-            ],
+            arguments=node_arguments,
         ),
         Node(
             package='rviz2',
@@ -64,5 +69,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'rviz', default_value='false',
             description='Launch RViz2 with the bievr_lio visualization config.'),
+        DeclareLaunchArgument(
+            'registration_metrics', default_value='',
+            description='Optional output path for the per-frame registration metrics CSV.'),
         OpaqueFunction(function=launch_setup),
     ])

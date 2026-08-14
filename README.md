@@ -238,7 +238,39 @@ Replay a rosbag2 directory:
 ```bash
 ros2 launch bievr_lio_ros2 process_bag.launch.py sensor_config:=<sensor_config> rosbag:=/path/to/bag_dir
 ```
+
+Record final-pose registration observability and quality metrics for an offline run:
+
+```bash
+ros2 launch bievr_lio_ros2 process_bag.launch.py \
+  sensor_config:=<sensor_config> \
+  rosbag:=/path/to/bag_dir \
+  registration_metrics:=/path/to/baseline_registration.csv
+```
 </details>
+
+### Registration metrics
+
+`registration_metrics` writes one CSV row for every steady-state scan-to-map frame. The file is
+truncated when the process starts, so use a distinct path for each experimental run. The same path
+can be set persistently with `debug.registration_metrics_path` in the algorithm YAML.
+
+The CSV records selected/fine/coarse point counts, final-pose effective correspondences and Huber
+inliers, residual quality, LM convergence, and the correction from the IMU-propagated pose to the
+final LiDAR registration pose. It also stores the ascending eigenvalues and all eigenvectors of the
+raw 6x6 Hessian (`h6_*`). Since that Hessian mixes rotational and translational units, the primary
+tunnel-degeneracy indicators are the translation block columns:
+
+- `htt_degeneracy_ratio`: `lambda_min / lambda_max`; values approaching zero indicate a weak
+  translational direction;
+- `htt_weak_body_*` / `htt_weak_world_*`: weakest translation axis in the current IMU/body frame
+  and map/world frame;
+- `htt_weak_information_per_effective_point`: weakest eigenvalue normalized by the number of valid
+  residual points, allowing runs with different sampling densities to be compared;
+- `effective_points` / `effective_ratio`: selected points that actually found a valid map residual.
+
+The metrics pass only observes the final Hessian. It does not project, clamp, or otherwise change
+the LM update.
 
 ## Configuration
 

@@ -22,6 +22,9 @@ struct RegistrationConfig {
   bool lm_debug_print = false;
   bool img_residual = true;
   bool img_jacobian = true;
+  // Re-linearize once at the final pose and retain Hessian diagnostics. This is
+  // enabled by Pipeline only when a registration-metrics output file is open.
+  bool collect_diagnostics = false;
 };
 
 inline bool getSubPixelValue(const Voxel* voxel, const double x, const double y, double& value) {
@@ -154,7 +157,10 @@ inline bool sampleValueAndGradient(const Voxel* voxel, const double x, const dou
 
 struct Accumulator {
   int count = 0;
+  int huber_inlier_count = 0;
   double error_sum = 0.0;
+  double squared_error_sum = 0.0;
+  double weight_sum = 0.0;
   Matrix66 H = Matrix66::Zero();
   Vector6 b = Vector6::Zero();
   double huber_delta = 0.2;  // default delta
@@ -165,7 +171,10 @@ struct Accumulator {
     bool inlier = abs_r <= huber_delta;
     double w = inlier ? 1.0 : huber_delta / abs_r;
 
+    huber_inlier_count += static_cast<int>(inlier);
     error_sum += inlier ? 0.5 * r * r : huber_delta * (abs_r - 0.5 * huber_delta);
+    squared_error_sum += r * r;
+    weight_sum += w;
 
     if (J) {
       const Vector6 wJ = w * J->transpose();
@@ -176,10 +185,48 @@ struct Accumulator {
 
   inline void merge(const Accumulator& other) {
     count += other.count;
+    huber_inlier_count += other.huber_inlier_count;
     error_sum += other.error_sum;
+    squared_error_sum += other.squared_error_sum;
+    weight_sum += other.weight_sum;
     H += other.H;
     b += other.b;
   }
+};
+
+// Final-pose registration observability metrics. The 6D perturbation ordering
+// is [rx, ry, rz, tx, ty, tz]. Since the optimizer right-multiplies its pose,
+// these axes are expressed in the current source/body frame. The full Hessian
+// mixes radians and metres; translation-only metrics are therefore provided as
+// the primary tunnel-degeneracy signal.
+struct RegistrationDiagnostics {
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  bool valid = false;
+  bool converged = false;
+  int iterations = 0;
+  size_t source_points = 0;
+  int effective_points = 0;
+  int huber_inlier_points = 0;
+  double effective_ratio = 0.0;
+  double huber_inlier_ratio = 0.0;
+  double robust_cost = 0.0;
+  double residual_rmse = 0.0;
+  double weight_sum = 0.0;
+  double gradient_norm = 0.0;
+
+  // Eigenvalues are ascending. Each eigenvector occupies the corresponding
+  // column and has a deterministic sign for easier plotting across frames.
+  Vector6 hessian_eigenvalues = Vector6::Zero();
+  Matrix66 hessian_eigenvectors = Matrix66::Identity();
+  double hessian_condition_number = 0.0;
+  double hessian_degeneracy_ratio = 0.0;
+
+  V3 translation_eigenvalues = V3::Zero();
+  M3 translation_eigenvectors = M3::Identity();
+  double translation_condition_number = 0.0;
+  double translation_degeneracy_ratio = 0.0;
+  double weakest_translation_information_per_point = 0.0;
 };
 
 class LsqRegistration {
@@ -197,12 +244,17 @@ class LsqRegistration {
   // pose). Reported on the dashboard as "Effective Points".
   int numEffectivePoints() const { return num_effective_points_; }
 
+  const RegistrationDiagnostics& diagnostics() const { return diagnostics_; }
+
  private:
   bool isConverged(const Transform& delta) const;
 
-  double linearize(const Transform& T_W_L, Matrix66* H = nullptr, Vector6* b = nullptr);
+  double linearize(const Transform& T_W_L, Matrix66* H = nullptr, Vector6* b = nullptr,
+                   Accumulator* statistics = nullptr);
 
   bool stepLm(Transform& x0, Transform& delta);
+
+  void updateDiagnostics(const Matrix66& H, const Vector6& b, const Accumulator& statistics);
 
   RegistrationConfig config_;
   double lm_lambda_ = -1.0;
@@ -210,7 +262,9 @@ class LsqRegistration {
   const Pointcloud& points_j_;
   std::vector<M3> skew_points_j_;
   bool converged_ = false;
+  int num_iterations_ = 0;
   int num_effective_points_ = 0;
+  RegistrationDiagnostics diagnostics_;
 };
 
 }  // namespace bievr

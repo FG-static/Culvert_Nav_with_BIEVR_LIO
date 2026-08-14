@@ -3,13 +3,52 @@
 
 #include "bievr_lio/ls_optimizer.h"
 
+#include <Eigen/Eigenvalues>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_reduce.h>
+
+#include <algorithm>
+#include <cmath>
 
 #include "bievr_lio/log++.h"
 #include "bievr_lio/utils.h"
 
 namespace bievr {
+namespace {
+
+// Eigenvector signs are mathematically arbitrary. Canonicalizing the largest
+// component to be positive prevents harmless frame-to-frame sign flips from
+// making the logged weak-direction axis difficult to plot.
+template <typename MatrixType>
+void canonicalizeEigenvectorSigns(MatrixType& eigenvectors) {
+  for (Eigen::Index col = 0; col < eigenvectors.cols(); ++col) {
+    Eigen::Index dominant_row = 0;
+    eigenvectors.col(col).cwiseAbs().maxCoeff(&dominant_row);
+    if (eigenvectors(dominant_row, col) < 0.0) {
+      eigenvectors.col(col) *= -1.0;
+    }
+  }
+}
+
+template <typename VectorType>
+void spectrumRatios(const VectorType& eigenvalues, double& condition_number,
+                    double& degeneracy_ratio) {
+  const double lambda_max = std::max(0.0, eigenvalues(eigenvalues.size() - 1));
+  const double lambda_min = std::max(0.0, eigenvalues(0));
+  if (lambda_max <= 0.0) {
+    condition_number = 0.0;
+    degeneracy_ratio = 0.0;
+    return;
+  }
+
+  degeneracy_ratio = lambda_min / lambda_max;
+  // Keep the CSV finite even for an exactly singular Hessian. The cap is only
+  // for representation; degeneracy_ratio still becomes exactly zero.
+  const double floor = std::max(1e-12, lambda_max * 1e-12);
+  condition_number = lambda_max / std::max(lambda_min, floor);
+}
+
+}  // namespace
 
 LsqRegistration::LsqRegistration(const BIEVRMap& map, const Pointcloud& source,
                                  const RegistrationConfig& config)
@@ -31,12 +70,21 @@ Transform LsqRegistration::computeTransformation(const Transform& T_W_L_init) {
   }
 
   for (int i = 0; i < config_.max_iterations && !converged_; i++) {
+    ++num_iterations_;
     Transform delta;
     if (!stepLm(x0, delta)) {
       LOG(W, "lm not converged!!");
       break;
     }
     converged_ = isConverged(delta);
+  }
+
+  if (config_.collect_diagnostics) {
+    Matrix66 H;
+    Vector6 b;
+    Accumulator statistics;
+    linearize(x0, &H, &b, &statistics);
+    updateDiagnostics(H, b, statistics);
   }
 
   return x0;
@@ -52,7 +100,8 @@ bool LsqRegistration::isConverged(const Transform& delta) const {
   return std::max(r_delta.maxCoeff(), t_delta.maxCoeff()) < 1;
 }
 
-double LsqRegistration::linearize(const Transform& T_W_L, Matrix66* H, Vector6* b) {
+double LsqRegistration::linearize(const Transform& T_W_L, Matrix66* H, Vector6* b,
+                                  Accumulator* statistics) {
   const bool compute_jacobians = (H != nullptr && b != nullptr);
 
   Accumulator identity_accumulator;
@@ -130,8 +179,63 @@ double LsqRegistration::linearize(const Transform& T_W_L, Matrix66* H, Vector6* 
     // linearization so the pipeline can report the effective point count.
     num_effective_points_ = total.count;
   }
+  if (statistics) {
+    *statistics = total;
+  }
 
   return total.error_sum;
+}
+
+void LsqRegistration::updateDiagnostics(const Matrix66& H, const Vector6& b,
+                                        const Accumulator& statistics) {
+  diagnostics_ = RegistrationDiagnostics();
+  diagnostics_.converged = converged_;
+  diagnostics_.iterations = num_iterations_;
+  diagnostics_.source_points = points_j_.size();
+  diagnostics_.effective_points = statistics.count;
+  diagnostics_.huber_inlier_points = statistics.huber_inlier_count;
+  diagnostics_.robust_cost = statistics.error_sum;
+  diagnostics_.weight_sum = statistics.weight_sum;
+  diagnostics_.gradient_norm = b.norm();
+
+  if (!points_j_.empty()) {
+    diagnostics_.effective_ratio =
+        static_cast<double>(statistics.count) / static_cast<double>(points_j_.size());
+  }
+  if (statistics.count > 0) {
+    diagnostics_.huber_inlier_ratio = static_cast<double>(statistics.huber_inlier_count) /
+                                      static_cast<double>(statistics.count);
+    diagnostics_.residual_rmse =
+        std::sqrt(statistics.squared_error_sum / static_cast<double>(statistics.count));
+  }
+
+  const Matrix66 H_symmetric = 0.5 * (H + H.transpose());
+  Eigen::SelfAdjointEigenSolver<Matrix66> hessian_solver(H_symmetric);
+
+  const M3 H_translation = H_symmetric.bottomRightCorner<3, 3>();
+  Eigen::SelfAdjointEigenSolver<M3> translation_solver(H_translation);
+
+  if (hessian_solver.info() != Eigen::Success || translation_solver.info() != Eigen::Success ||
+      statistics.count == 0) {
+    return;
+  }
+
+  diagnostics_.hessian_eigenvalues = hessian_solver.eigenvalues();
+  diagnostics_.hessian_eigenvectors = hessian_solver.eigenvectors();
+  canonicalizeEigenvectorSigns(diagnostics_.hessian_eigenvectors);
+  spectrumRatios(diagnostics_.hessian_eigenvalues, diagnostics_.hessian_condition_number,
+                 diagnostics_.hessian_degeneracy_ratio);
+
+  diagnostics_.translation_eigenvalues = translation_solver.eigenvalues();
+  diagnostics_.translation_eigenvectors = translation_solver.eigenvectors();
+  canonicalizeEigenvectorSigns(diagnostics_.translation_eigenvectors);
+  spectrumRatios(diagnostics_.translation_eigenvalues,
+                 diagnostics_.translation_condition_number,
+                 diagnostics_.translation_degeneracy_ratio);
+  diagnostics_.weakest_translation_information_per_point =
+      std::max(0.0, diagnostics_.translation_eigenvalues(0)) /
+      static_cast<double>(statistics.count);
+  diagnostics_.valid = true;
 }
 
 namespace {

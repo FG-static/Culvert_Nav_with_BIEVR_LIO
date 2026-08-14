@@ -3,13 +3,14 @@
   <arg name="params" default="params"/>
   <arg name="rviz" default="false"/>
   <arg name="rosbag"/>
+  <arg name="registration_metrics" default=""/>
   <!-- The node reads the YAML config-file paths (and bag path) from its
        command-line arguments (not the ROS parameter server), via args=. An
        absolute path (starting with '/') is used verbatim so configs can live in
        an external folder; otherwise the arg is a name (without .yaml) looked up
        in the package's config/ directory. -->
   <node pkg="bievr_lio_ros" type="process_bag" name="bievr_lio_bag_node" output="screen" required="true"
-        args="$(eval '--sensor_config_file ' + (arg('sensor_config') if arg('sensor_config').startswith('/') else find('bievr_lio_ros') + '/../../config/sensor_configs/' + arg('sensor_config') + '.yaml') + ' --params_file ' + (arg('params') if arg('params').startswith('/') else find('bievr_lio_ros') + '/../../config/' + arg('params') + '.yaml') + ' --bag ' + arg('rosbag'))"/>
+        args="$(eval '--sensor_config_file ' + (arg('sensor_config') if arg('sensor_config').startswith('/') else find('bievr_lio_ros') + '/../../config/sensor_configs/' + arg('sensor_config') + '.yaml') + ' --params_file ' + (arg('params') if arg('params').startswith('/') else find('bievr_lio_ros') + '/../../config/' + arg('params') + '.yaml') + ' --bag ' + arg('rosbag') + ((' --registration_metrics ' + arg('registration_metrics')) if arg('registration_metrics') else ''))"/>
 
   <group if="$(arg rviz)">
     <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find bievr_lio_ros)/rviz/config.rviz" />

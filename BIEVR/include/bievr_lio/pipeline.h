@@ -30,6 +30,9 @@ class Pipeline {
     std::string map_frame = "map";
     std::string body_frame = "body";
     std::string log_path = "";
+    // Optional per-frame CSV with registration observability and quality metrics.
+    // Empty disables the extra final-pose linearization and file output.
+    std::string registration_metrics_path = "";
 
     size_t min_points_for_map_init = 100;
     size_t map_size_running_threshold = 5;
@@ -96,6 +99,13 @@ class Pipeline {
 
   // Logging
   void logTUM(double timestamp, const Transform& pose);
+  void writeRegistrationMetricsHeader();
+  void logRegistrationMetrics(uint64_t stamp_ns, uint32_t frame_id,
+                              const Transform& T_W_I_init, const Transform& T_W_I,
+                              const RegistrationDiagnostics& diagnostics,
+                              size_t undistorted_points, size_t selected_points,
+                              size_t fine_points, size_t coarse_points, double frame_time_ms,
+                              double registration_time_ms);
 
   Config config_;
   std::map<uint64_t, State> states_;
@@ -118,6 +128,7 @@ class Pipeline {
       std::function<void(const void*, const Header&, const std::string&, const std::string&)>;
   std::unordered_map<std::type_index, PublishFunction> publishers_;
   std::shared_ptr<std::ofstream> tum_log_;
+  std::shared_ptr<std::ofstream> registration_metrics_log_;
 
   // Accumulated state for the live status dashboard (printDashboard in utils).
   DashboardState dashboard_;

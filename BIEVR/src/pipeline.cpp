@@ -1,6 +1,9 @@
 #include "bievr_lio/pipeline.h"
 
+#include <array>
+#include <chrono>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 #include "bievr_lio/inertial_factor.h"
@@ -19,6 +22,20 @@ Pipeline::Pipeline(const Config& config) : config_(config) {
     tum_log_ = std::make_shared<std::ofstream>(config_.log_path, std::ios::trunc);
     if (!tum_log_->is_open()) {
       LOG(E, "Error opening output file.");
+    }
+  }
+
+  if (!config_.registration_metrics_path.empty()) {
+    LOG(I, "Registration metrics logging to " << config_.registration_metrics_path);
+    registration_metrics_log_ =
+        std::make_shared<std::ofstream>(config_.registration_metrics_path, std::ios::trunc);
+    if (!registration_metrics_log_->is_open()) {
+      LOG(E, "Error opening registration metrics file '"
+                 << config_.registration_metrics_path << "'. Diagnostics disabled.");
+      registration_metrics_log_.reset();
+    } else {
+      config_.registration.collect_diagnostics = true;
+      writeRegistrationMetricsHeader();
     }
   }
 
@@ -45,6 +62,7 @@ Pipeline::Pipeline(const Config& config) : config_(config) {
 
 void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
                             const StampedIntensityPointcloud& points_L) {
+  const auto frame_wall_start = std::chrono::steady_clock::now();
   timing::Timer step_timer("step");
 
   if (imu_data.empty()) {
@@ -135,8 +153,13 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
 
   // Perform the actual registration
   timing::Timer align_timer("05_registration");
+  const auto registration_wall_start = std::chrono::steady_clock::now();
   LsqRegistration optimizer(*map_, source_filtered, config_.registration);
   const Transform T_W_I = optimizer.computeTransformation(T_W_I_init);
+  const double registration_time_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                               registration_wall_start)
+          .count();
   const int n_effective_points = optimizer.numEffectivePoints();
   align_timer.Stop();
 
@@ -163,6 +186,16 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
   pub_time.Stop();
 
   step_timer.Stop();
+
+  if (registration_metrics_log_) {
+    const double frame_time_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                 frame_wall_start)
+            .count();
+    logRegistrationMetrics(header.stamp, header.seq, T_W_I_init, T_W_I, optimizer.diagnostics(),
+                           points_undistorted_I.size(), source_filtered.size(), source_fine.size(),
+                           source_coarse.size(), frame_time_ms, registration_time_ms);
+  }
 
   if (!config_.log_path.empty()) {
     logTUM(nsToS(points_L.end_stamp), T_W_I);
@@ -400,6 +433,86 @@ void Pipeline::logTUM(double timestamp, const Transform& pose) {
   (*tum_log_) << std::fixed;
   (*tum_log_) << timestamp << " " << t.x() << " " << t.y() << " " << t.z() << " " << q.x() << " "
               << q.y() << " " << q.z() << " " << q.w() << "\n";
+}
+
+void Pipeline::writeRegistrationMetricsHeader() {
+  if (!registration_metrics_log_ || !registration_metrics_log_->is_open()) return;
+
+  constexpr std::array<const char*, 6> kAxes = {"rx", "ry", "rz", "tx", "ty", "tz"};
+  std::ofstream& out = *registration_metrics_log_;
+  out << "schema_version,stamp_ns,stamp_s,frame_id,diagnostics_valid,lm_converged,lm_iterations,"
+         "frame_time_ms,registration_time_ms,undistorted_points,selected_points,fine_points,"
+         "coarse_points,effective_points,huber_inlier_points,effective_ratio,huber_inlier_ratio,"
+         "robust_cost,residual_rmse,robust_weight_sum,gradient_norm";
+  for (int i = 0; i < 6; ++i) out << ",h6_eigenvalue_" << i;
+  out << ",h6_condition_number,h6_degeneracy_ratio";
+  for (int eigenvector = 0; eigenvector < 6; ++eigenvector) {
+    for (int axis = 0; axis < 6; ++axis) {
+      out << ",h6_eigenvector_" << eigenvector << "_" << kAxes[axis];
+    }
+  }
+  for (int i = 0; i < 3; ++i) out << ",htt_eigenvalue_" << i;
+  out << ",htt_condition_number,htt_degeneracy_ratio,htt_weak_information_per_effective_point,"
+         "htt_weak_body_x,htt_weak_body_y,htt_weak_body_z,"
+         "htt_weak_world_x,htt_weak_world_y,htt_weak_world_z,"
+         "imu_lidar_rotation_correction_body_rx,imu_lidar_rotation_correction_body_ry,"
+         "imu_lidar_rotation_correction_body_rz,imu_lidar_rotation_correction_norm_rad,"
+         "imu_lidar_translation_correction_body_x,imu_lidar_translation_correction_body_y,"
+         "imu_lidar_translation_correction_body_z,imu_lidar_translation_correction_body_norm_m,"
+         "imu_lidar_translation_correction_world_x,imu_lidar_translation_correction_world_y,"
+         "imu_lidar_translation_correction_world_z,imu_lidar_translation_correction_world_norm_m\n";
+  out.flush();
+}
+
+void Pipeline::logRegistrationMetrics(uint64_t stamp_ns, uint32_t frame_id,
+                                      const Transform& T_W_I_init, const Transform& T_W_I,
+                                      const RegistrationDiagnostics& diagnostics,
+                                      size_t undistorted_points, size_t selected_points,
+                                      size_t fine_points, size_t coarse_points,
+                                      double frame_time_ms, double registration_time_ms) {
+  if (!registration_metrics_log_ || !registration_metrics_log_->is_open()) return;
+
+  const V3 weak_translation_body = diagnostics.translation_eigenvectors.col(0);
+  const V3 weak_translation_world = T_W_I.linear() * weak_translation_body;
+  const Transform T_init_final = T_W_I_init.inverse() * T_W_I;
+  const V3 rotation_correction_body = logMap(T_init_final.linear());
+  const V3 translation_correction_body = T_init_final.translation();
+  const V3 translation_correction_world = T_W_I.translation() - T_W_I_init.translation();
+
+  std::ofstream& out = *registration_metrics_log_;
+  out << std::setprecision(17);
+  out << 1 << ',' << stamp_ns << ',' << nsToS(stamp_ns) << ',' << frame_id << ','
+      << static_cast<int>(diagnostics.valid) << ',' << static_cast<int>(diagnostics.converged) << ','
+      << diagnostics.iterations << ',' << frame_time_ms << ',' << registration_time_ms << ','
+      << undistorted_points << ',' << selected_points << ',' << fine_points << ',' << coarse_points
+      << ',' << diagnostics.effective_points << ',' << diagnostics.huber_inlier_points << ','
+      << diagnostics.effective_ratio << ',' << diagnostics.huber_inlier_ratio << ','
+      << diagnostics.robust_cost << ',' << diagnostics.residual_rmse << ','
+      << diagnostics.weight_sum << ',' << diagnostics.gradient_norm;
+
+  for (int i = 0; i < 6; ++i) out << ',' << diagnostics.hessian_eigenvalues(i);
+  out << ',' << diagnostics.hessian_condition_number << ','
+      << diagnostics.hessian_degeneracy_ratio;
+  for (int eigenvector = 0; eigenvector < 6; ++eigenvector) {
+    for (int axis = 0; axis < 6; ++axis) {
+      out << ',' << diagnostics.hessian_eigenvectors(axis, eigenvector);
+    }
+  }
+  for (int i = 0; i < 3; ++i) out << ',' << diagnostics.translation_eigenvalues(i);
+  out << ',' << diagnostics.translation_condition_number << ','
+      << diagnostics.translation_degeneracy_ratio << ','
+      << diagnostics.weakest_translation_information_per_point << ','
+      << weak_translation_body.x() << ',' << weak_translation_body.y() << ','
+      << weak_translation_body.z() << ',' << weak_translation_world.x() << ','
+      << weak_translation_world.y() << ',' << weak_translation_world.z() << ','
+      << rotation_correction_body.x() << ',' << rotation_correction_body.y() << ','
+      << rotation_correction_body.z() << ',' << rotation_correction_body.norm() << ','
+      << translation_correction_body.x() << ',' << translation_correction_body.y() << ','
+      << translation_correction_body.z() << ',' << translation_correction_body.norm() << ','
+      << translation_correction_world.x() << ',' << translation_correction_world.y() << ','
+      << translation_correction_world.z() << ',' << translation_correction_world.norm() << '\n';
+  // Preserve the last diagnostic frame even if an experimental run terminates early.
+  out.flush();
 }
 
 }  // namespace bievr
