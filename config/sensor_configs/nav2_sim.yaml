@@ -1,0 +1,28 @@
+topics:
+  pointcloud: "/livox/lidar"
+  imu: "/livox/imu"
+
+# T_IMU_LIDAR: transform LiDAR-frame points into the IMU frame.
+calibration:
+  translation: [0.0, 0.0, 0.12]
+  rotation: [1, 0, 0,
+             0, 1, 0,
+             0, 0, 1]
+
+lidar:
+  min_range_m: 0.2
+  max_range_m: 11.5
+  # The adapter publishes a Mid360-compatible uint32 relative-nanosecond t field.
+  assume_simultaneous_points: false
+
+map:
+  frame: "odom"
+
+imu:
+  # Gazebo publishes acceleration in m/s^2 rather than normalized g units.
+  normalized: 0.0
+  # Nav2 consumes the odometry transform as odom -> base_footprint.
+  frame: "base_footprint"
+
+debug:
+  dashboard: false

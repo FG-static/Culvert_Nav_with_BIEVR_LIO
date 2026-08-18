@@ -77,8 +77,10 @@ int main(int argc, char** argv) {
     if (type == "sensor_msgs/msg/PointCloud2") {
       auto msg = deserialize<sensor_msgs::msg::PointCloud2>(serialized);
       bievr::StampedIntensityPointcloud pointcloud;
-      bievr::msgToPointcloud(msg, pointcloud);
-      synchronizer->addPointcloud(pointcloud);
+      if (bievr::msgToPointcloud(msg, pointcloud,
+                                 config.topic_config.assume_simultaneous_points)) {
+        synchronizer->addPointcloud(pointcloud);
+      }
     }
 #ifdef BIEVR_WITH_LIVOX
     else if (type == "livox_ros_driver2/msg/CustomMsg") {

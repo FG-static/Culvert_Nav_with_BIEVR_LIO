@@ -25,6 +25,12 @@ def launch_setup(context, *args, **kwargs):
     sensor_config = LaunchConfiguration('sensor_config').perform(context)
     params = LaunchConfiguration('params').perform(context)
     registration_metrics = LaunchConfiguration('registration_metrics').perform(context)
+    use_sim_time_arg = LaunchConfiguration('use_sim_time').perform(context).lower()
+    if use_sim_time_arg == 'auto':
+        sensor_config_name = os.path.basename(sensor_config)
+        use_sim_time = sensor_config_name in ('nav2_sim', 'nav2_sim.yaml')
+    else:
+        use_sim_time = use_sim_time_arg in ('true', '1', 'yes', 'on')
 
     rviz_config = os.path.join(
         get_package_share_directory('bievr_lio_ros2'), 'rviz', 'config.rviz')
@@ -45,6 +51,7 @@ def launch_setup(context, *args, **kwargs):
             # Pass only the YAML config-file *paths* as command-line arguments;
             # the node parses them with yaml-cpp (the same plain files ROS1 uses).
             arguments=node_arguments,
+            parameters=[{'use_sim_time': use_sim_time}],
         ),
         Node(
             package='rviz2',
@@ -69,6 +76,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'rviz', default_value='false',
             description='Launch RViz2 with the bievr_lio visualization config.'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='auto',
+            description='Use /clock; auto enables it for the nav2_sim sensor config.'),
         DeclareLaunchArgument(
             'registration_metrics', default_value='',
             description='Optional output path for the per-frame registration metrics CSV.'),

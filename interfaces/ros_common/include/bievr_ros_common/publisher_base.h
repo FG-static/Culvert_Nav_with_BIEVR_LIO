@@ -72,6 +72,12 @@ class PublisherBase {
 
   bool publishImpl(const Odometry& odometry, const Header& header, const std::string& topic,
                    const std::string& child_frame) {
+    if (!odometry.pose.matrix().allFinite() || !odometry.linear_velocity.allFinite() ||
+        !odometry.angular_velocity.allFinite()) {
+      LOG(E, "Dropping non-finite odometry and TF for topic " << topic);
+      return false;
+    }
+
     typename Backend::Odometry odom_msg;
     if (!getOrAdvertise<typename Backend::Odometry>(topic)) return false;
     headerToMsg(header, odom_msg.header);

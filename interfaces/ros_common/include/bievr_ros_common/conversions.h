@@ -128,6 +128,7 @@ inline T readAt(const uint8_t* p) {
 
 // How the per-point time field is encoded in the message.
 enum class TimeEncoding {
+  kSimultaneous,  // no time field: all points use the message header stamp
   kNanosUint32,   // "t": uint32 nanoseconds, relative to scan start (Ouster)
   kSecondsFloat,  // "time": float32 seconds, relative to an arbitrary origin (Velodyne)
   kStampDouble,   // "timestamp": float64 absolute seconds (or ns above a threshold) (Hesai)
@@ -232,7 +233,8 @@ bool livoxToStampedIntensity(const LivoxMsgT& pointcloud_msg, uint64_t base_stam
 template <typename PointCloud2T>
   requires conv_detail::PointCloud2Like<PointCloud2T>
 bool msgToPointcloud(const PointCloud2T& pointcloud_msg,
-                     StampedIntensityPointcloud& stamped_pointcloud) {
+                     StampedIntensityPointcloud& stamped_pointcloud,
+                     bool assume_simultaneous_points = false) {
   using namespace conv_detail;
   timing::Timer conversion_timer("00_conversion_pc2");
 
@@ -263,8 +265,8 @@ bool msgToPointcloud(const PointCloud2T& pointcloud_msg,
   const uint32_t off_x = x_field->offset;
 
   // Resolve the time field and its encoding.
-  TimeEncoding enc;
-  uint32_t off_t;
+  TimeEncoding enc = TimeEncoding::kSimultaneous;
+  uint32_t off_t = 0;
   if (const auto* f = findField(fields, "t")) {
     enc = TimeEncoding::kNanosUint32;
     off_t = f->offset;
@@ -274,9 +276,12 @@ bool msgToPointcloud(const PointCloud2T& pointcloud_msg,
   } else if (const auto* f = findField(fields, "timestamp")) {
     enc = TimeEncoding::kStampDouble;
     off_t = f->offset;
-  } else {
+  } else if (!assume_simultaneous_points) {
     LOG(E, "Pointcloud has no recognized time field (t/time/timestamp); skipping.");
     return false;
+  } else {
+    LOG_FIRST(W, 1,
+              "Pointcloud has no per-point time field; treating all points as simultaneous.");
   }
 
   // Optional float32 intensity channel.
@@ -304,6 +309,9 @@ bool msgToPointcloud(const PointCloud2T& pointcloud_msg,
           double time;
           bool valid = true;
           switch (enc) {
+            case TimeEncoding::kSimultaneous:
+              time = 0.0;
+              break;
             case TimeEncoding::kNanosUint32:
               time = static_cast<double>(readAt<uint32_t>(p + off_t)) * 1e-9;
               valid = time <= 0.2;  // reject obviously bogus (wrapped) stamps

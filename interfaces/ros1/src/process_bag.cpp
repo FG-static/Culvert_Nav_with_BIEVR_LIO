@@ -56,8 +56,10 @@ int main(int argc, char** argv) {
     if ((msg.getDataType() == "sensor_msgs/PointCloud2")) {
       sensor_msgs::PointCloud2::ConstPtr s = msg.instantiate<sensor_msgs::PointCloud2>();
       bievr::StampedIntensityPointcloud pointcloud;
-      bievr::msgToPointcloud(*s, pointcloud);
-      synchronizer.addPointcloud(pointcloud);
+      if (bievr::msgToPointcloud(*s, pointcloud,
+                                 config.topic_config.assume_simultaneous_points)) {
+        synchronizer.addPointcloud(pointcloud);
+      }
     }
 #ifdef BIEVR_WITH_LIVOX
     else if ((msg.getDataType() == "livox_ros_driver/CustomMsg")) {

@@ -34,6 +34,7 @@ struct TopicConfig {
   std::string pointcloud_topic = "/points";
   std::string imu_topic = "/imu";
   std::string bag_path = "";
+  bool assume_simultaneous_points = false;
 };
 
 struct Config {
@@ -148,6 +149,7 @@ inline void printConfigOverview(const Config& config) {
   os << "lidar:\n";
   os << "  min_range_m:          " << hc.preprocess.min_range << "\n";
   os << "  max_range_m:          " << hc.preprocess.max_range << "\n";
+  os << "  assume_simultaneous_points: " << yn(tc.assume_simultaneous_points) << "\n";
   os << "map:\n";
   os << "  pixel_size_m:   " << hc.map.px_size << "\n";
   os << "  voxel_size_m:   " << hc.map.voxel_size << "\n";
@@ -222,6 +224,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   // --- lidar ---
   hc.preprocess.min_range = yaml.get<double>("lidar", "min_range_m", 0.5);
   hc.preprocess.max_range = yaml.get<double>("lidar", "max_range_m", 100.);
+  tc.assume_simultaneous_points =
+      yaml.get<bool>("lidar", "assume_simultaneous_points", false);
 
   // --- map ---
   // These resolutions/tolerances are optional (fall back to the defaults below)
