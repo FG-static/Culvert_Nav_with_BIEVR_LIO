@@ -1,6 +1,18 @@
 topics:
   pointcloud: "/livox/lidar"
   imu: "/livox/imu"
+  # Wheel odometry (nav_msgs/Odometry). The twist must be the velocity of the
+  # child frame expressed in the child frame (standard nav_msgs semantics).
+  wheel: "/odom"
+
+# T_IMU_WHEEL: transform wheel-odometry child frame points into the IMU frame.
+# The sim IMU sits at the base origin, so the default identity is correct;
+# uncomment and set translation/rotation if your wheel frame is offset.
+# wheel_calibration:
+#   translation: [0.0, 0.0, 0.0]
+#   rotation: [1, 0, 0,
+#              0, 1, 0,
+#              0, 0, 1]
 
 # T_IMU_LIDAR: transform LiDAR-frame points into the IMU frame.
 calibration:
@@ -23,6 +35,9 @@ imu:
   normalized: 0.0
   # Nav2 consumes the odometry transform as odom -> base_footprint.
   frame: "base_footprint"
+
+wheel:
+  enabled: True # This robot publishes wheel odometry on /odom
 
 debug:
   dashboard: false

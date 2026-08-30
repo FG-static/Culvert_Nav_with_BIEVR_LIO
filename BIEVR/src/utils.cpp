@@ -96,6 +96,11 @@ void printDashboard(DashboardState& state, uint64_t stamp_ns, const Transform& T
   out << row("Gyro Bias (x,y,z) [rad/s] : " + dashFmt(gyro_bias.x()) + " " +
              dashFmt(gyro_bias.y()) + " " + dashFmt(gyro_bias.z()))
       << "\n";
+  if (state.wheel_enabled) {
+    out << row("Wheel Scale / Resid RMS   : " + dashFmt(state.wheel_scale) + " / " +
+               dashFmt(state.wheel_residual_rms) + " m/s")
+        << "\n";
+  }
   out << rule << "\n";
   out << row("Effective Points      [#] : " + std::to_string(n_effective_points)) << "\n";
   out << row("Computation Time     [ms] : Avg: " + dashMs(comp_mean_s) +

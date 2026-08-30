@@ -33,6 +33,9 @@ namespace bievr {
 struct TopicConfig {
   std::string pointcloud_topic = "/points";
   std::string imu_topic = "/imu";
+  // nav_msgs/Odometry wheel-odometry topic. Only subscribed when the pipeline
+  // wheel config is enabled.
+  std::string wheel_topic = "";
   std::string bag_path = "";
   bool assume_simultaneous_points = false;
 };
@@ -176,6 +179,19 @@ inline void printConfigOverview(const Config& config) {
   os << "  t_init:               " << hc.imu.t_init << "\n";
   os << "  normalized:           " << hc.imu.normalized << "\n";
   os << "  frame:                " << hc.body_frame << "\n";
+  os << "wheel:\n";
+  os << "  enabled:              " << yn(hc.wheel.enabled) << "\n";
+  if (hc.wheel.enabled) {
+    os << "  topic:                " << (tc.wheel_topic.empty() ? "<none>" : tc.wheel_topic)
+       << "\n";
+    os << "  sigma_v:              " << hc.wheel.sigma_v << "\n";
+    os << "  max_sync_delay_s:     " << hc.wheel.max_sync_delay_s << "\n";
+    os << "  planar_only:          " << yn(hc.wheel.planar_only) << "\n";
+    os << "  estimate_scale:       " << yn(hc.wheel.estimate_scale) << "\n";
+    if (hc.wheel.estimate_scale) {
+      os << "  scale_prior_sigma:    " << hc.wheel.scale_prior_sigma << "\n";
+    }
+  }
   os << "debug:\n";
   os << "  publish_all_clouds:        " << yn(hc.publish_all_clouds) << "\n";
   os << "  print_timing:         " << yn(hc.print_timing) << "\n";
@@ -190,6 +206,10 @@ inline void printConfigOverview(const Config& config) {
      << (hc.registration_metrics_path.empty() ? "<none>" : hc.registration_metrics_path) << "\n";
   os << "calibration (LiDAR -> IMU):\n";
   printExtrinsic(os, "T_I_L", hc.T_I_L);
+  if (hc.wheel.enabled) {
+    os << "calibration (wheel-odometry child -> IMU):\n";
+    printExtrinsic(os, "T_I_W", hc.wheel.T_I_W);
+  }
   os << "==================================================";
   LOG(I, os.str());
 }
@@ -220,6 +240,7 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   // --- topics ---
   tc.pointcloud_topic = yaml.get<std::string>("topics", "pointcloud", tc.pointcloud_topic);
   tc.imu_topic = yaml.get<std::string>("topics", "imu", tc.imu_topic);
+  tc.wheel_topic = yaml.get<std::string>("topics", "wheel", tc.wheel_topic);
 
   // --- lidar ---
   hc.preprocess.min_range = yaml.get<double>("lidar", "min_range_m", 0.5);
@@ -286,6 +307,34 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.imu.normalized = yaml.get<double>("imu", "normalized", -1.0);
   // The IMU frame is the body (child) frame of the published odometry.
   hc.body_frame = yaml.get<std::string>("imu", "frame", hc.body_frame);
+
+  // --- wheel odometry (velocity factor in the inertial window) ---
+  // Enable flag and topic are sensor properties (usually set in the sensor
+  // config); the noise/behaviour knobs are algorithm parameters (params.yaml).
+  hc.wheel.enabled = yaml.get<bool>("wheel", "enabled", hc.wheel.enabled);
+  hc.wheel.planar_only = yaml.get<bool>("wheel", "planar_only", hc.wheel.planar_only);
+  hc.wheel.estimate_scale =
+      yaml.get<bool>("wheel", "estimate_scale", hc.wheel.estimate_scale);
+  if (!config_internal::getPositive(yaml, "wheel", "sigma_v", hc.wheel.sigma_v,
+                                    hc.wheel.sigma_v) ||
+      !config_internal::getPositive(yaml, "wheel", "max_sync_delay_s",
+                                    hc.wheel.max_sync_delay_s, hc.wheel.max_sync_delay_s) ||
+      !config_internal::getPositive(yaml, "wheel", "scale_prior_sigma",
+                                    hc.wheel.scale_prior_sigma, hc.wheel.scale_prior_sigma)) {
+    return false;
+  }
+  // Extrinsic from the wheel-odometry child frame to the IMU frame. Optional:
+  // identity when the section is absent, hard error when half-supplied.
+  const std::vector<double> wheel_t_vec =
+      yaml.get<std::vector<double>>("wheel_calibration", "translation", {});
+  const std::vector<double> wheel_R_vec =
+      yaml.get<std::vector<double>>("wheel_calibration", "rotation", {});
+  if (!wheel_t_vec.empty() || !wheel_R_vec.empty()) {
+    if (!config_internal::extrinsicFromVectors(wheel_t_vec, wheel_R_vec, "wheel_calibration",
+                                               hc.wheel.T_I_W)) {
+      return false;
+    }
+  }
 
   // --- debug ---
   hc.publish_all_clouds = yaml.get<bool>("debug", "publish_all_clouds", false);

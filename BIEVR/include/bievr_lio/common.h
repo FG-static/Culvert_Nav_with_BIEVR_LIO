@@ -104,6 +104,16 @@ struct ImuMeasurement {
   V3 gyro;
 };
 
+// One wheel-odometry twist sample. `v_body` is the linear velocity of the
+// wheel-odometry child frame origin expressed in that frame's axes (standard
+// nav_msgs/Odometry twist semantics); `yaw_rate` rides along for diagnostics.
+struct WheelMeasurement {
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  uint64_t stamp;
+  V3 v_body;
+  double yaw_rate;
+};
+
 class Transform : public Eigen::Isometry3d {
   using Eigen::Isometry3d::Isometry3d;
 

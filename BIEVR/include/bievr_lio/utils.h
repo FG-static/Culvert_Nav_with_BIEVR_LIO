@@ -70,6 +70,11 @@ struct DashboardState {
   V3 last_position = V3::Zero();
   bool has_last_position = false;
   double first_time_s = -1.0;
+  // Wheel-odometry fusion status, set by the Pipeline each frame. The wheel
+  // line is only printed when wheel_enabled is true.
+  bool wheel_enabled = false;
+  double wheel_residual_rms = 0.0;
+  double wheel_scale = 1.0;
 };
 
 // Prints the dashboard ASCII art followed by a single boxed status line. Used

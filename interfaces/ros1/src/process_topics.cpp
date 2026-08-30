@@ -1,6 +1,7 @@
 #include <bievr_lio/common.h>
 #include <bievr_lio/log++.h>
 #include <bievr_lio/synchronizer.h>
+#include <nav_msgs/Odometry.h>
 #include <tbb/global_control.h>
 #include <tbb/task_arena.h>
 #include <topic_tools/shape_shifter.h>
@@ -36,7 +37,10 @@ int main(int argc, char** argv) {
 
   std::shared_ptr<bievr::Pipeline> pipeline =
       std::make_shared<bievr::Pipeline>(config.pipeline_config);
-  bievr::Synchronizer synchronizer(pipeline);
+  const bool wheel_input_enabled =
+      config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty();
+  bievr::Synchronizer synchronizer(pipeline, wheel_input_enabled,
+                                   config.pipeline_config.wheel.max_sync_delay_s);
   bievr::Publisher lio_pub(nh, pipeline, "bievr_lio");
 
   ros::Subscriber pointcloud_sub = nh.subscribe<topic_tools::ShapeShifter>(
@@ -98,6 +102,23 @@ int main(int argc, char** argv) {
         bievr::msgToImuMeasurement(*msg, imu);
         synchronizer.addImu(imu);
       });
+
+  // Optional wheel-odometry input for the window velocity factor. Only
+  // subscribed when enabled and a topic is configured.
+  ros::Subscriber wheel_sub;
+  if (config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty()) {
+    LOG(I, "Subscribing wheel odometry on '" << config.topic_config.wheel_topic << "'.");
+    wheel_sub = nh.subscribe<nav_msgs::Odometry>(
+        config.topic_config.wheel_topic, 100000, [&](const nav_msgs::Odometry::ConstPtr& msg) {
+          bievr::WheelMeasurement wheel;
+          if (!bievr::msgToWheelMeasurement(*msg, wheel)) {
+            return;
+          }
+          synchronizer.addWheelOdometry(wheel);
+        });
+  } else if (config.pipeline_config.wheel.enabled) {
+    LOG(W, "Wheel odometry fusion is enabled but no wheel topic is configured.");
+  }
 
   ros::spin();
 

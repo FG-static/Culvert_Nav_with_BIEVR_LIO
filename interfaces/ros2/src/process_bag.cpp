@@ -5,6 +5,7 @@
 #include <tbb/task_arena.h>
 
 #include <memory>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialization.hpp>
 #include <rosbag2_cpp/reader.hpp>
@@ -49,7 +50,10 @@ int main(int argc, char** argv) {
   LOG(I, config.max_num_threads > 0, "TBB parallelism limited to " << n_threads << " threads.");
 
   auto pipeline = std::make_shared<bievr::Pipeline>(config.pipeline_config);
-  auto synchronizer = std::make_shared<bievr::Synchronizer>(pipeline);
+  const bool wheel_input_enabled =
+      config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty();
+  auto synchronizer = std::make_shared<bievr::Synchronizer>(
+      pipeline, wheel_input_enabled, config.pipeline_config.wheel.max_sync_delay_s);
   auto lio_pub = std::make_shared<bievr::Publisher>(node, pipeline, "bievr_lio");
 
   rosbag2_cpp::Reader reader;
@@ -63,11 +67,13 @@ int main(int argc, char** argv) {
 
   const std::string& pc_topic = config.topic_config.pointcloud_topic;
   const std::string& imu_topic = config.topic_config.imu_topic;
+  const std::string& wheel_topic = config.topic_config.wheel_topic;
+  const bool wheel_enabled = wheel_input_enabled;
 
   while (rclcpp::ok() && reader.has_next()) {
     auto bag_msg = reader.read_next();
     const std::string& topic = bag_msg->topic_name;
-    if (topic != pc_topic && topic != imu_topic) {
+    if (topic != pc_topic && topic != imu_topic && !(wheel_enabled && topic == wheel_topic)) {
       continue;
     }
 
@@ -95,6 +101,12 @@ int main(int argc, char** argv) {
       bievr::ImuMeasurement imu;
       bievr::msgToImuMeasurement(msg, imu);
       synchronizer->addImu(imu);
+    } else if (wheel_enabled && topic == wheel_topic && type == "nav_msgs/msg/Odometry") {
+      auto msg = deserialize<nav_msgs::msg::Odometry>(serialized);
+      bievr::WheelMeasurement wheel;
+      if (bievr::msgToWheelMeasurement(msg, wheel)) {
+        synchronizer->addWheelOdometry(wheel);
+      }
     }
   }
 

@@ -41,6 +41,7 @@ add_library(${PROJECT_NAME}
   src/timing.cpp
   src/undistort.cpp
   src/utils.cpp
+  src/wheel_factor.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 

@@ -1,6 +1,7 @@
 #include <bievr_lio/common.h>
 #include <bievr_lio/log++.h>
 #include <bievr_lio/synchronizer.h>
+#include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
@@ -39,13 +40,19 @@ int main(int argc, char** argv) {
   std::shared_ptr<bievr::Pipeline> pipeline =
       std::make_shared<bievr::Pipeline>(config.pipeline_config);
 
-  bievr::Synchronizer synchronizer(pipeline);
+  const bool wheel_input_enabled =
+      config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty();
+  bievr::Synchronizer synchronizer(pipeline, wheel_input_enabled,
+                                   config.pipeline_config.wheel.max_sync_delay_s);
 
   bievr::Publisher lio_pub(nh, pipeline, "bievr_lio");
   rosbag::Bag bag;
   bag.open(config.topic_config.bag_path, rosbag::bagmode::Read);
   std::vector<std::string> topics = {config.topic_config.pointcloud_topic,
                                      config.topic_config.imu_topic};
+  if (config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty()) {
+    topics.push_back(config.topic_config.wheel_topic);
+  }
 
   rosbag::View bag_view(bag, rosbag::TopicQuery(topics));
   for (const rosbag::MessageInstance& msg : bag_view) {
@@ -82,6 +89,13 @@ int main(int argc, char** argv) {
       bievr::ImuMeasurement imu;
       bievr::msgToImuMeasurement(*s, imu);
       synchronizer.addImu(imu);
+    } else if (msg.getDataType() == "nav_msgs/Odometry" &&
+               msg.getTopic() == config.topic_config.wheel_topic) {
+      nav_msgs::Odometry::ConstPtr s = msg.instantiate<nav_msgs::Odometry>();
+      bievr::WheelMeasurement wheel;
+      if (bievr::msgToWheelMeasurement(*s, wheel)) {
+        synchronizer.addWheelOdometry(wheel);
+      }
     }
   }
 

@@ -26,6 +26,14 @@ imu:
     t_init: 0.2 # Time to initialize bias and gravity [s]
     frame: "imu"
 
+wheel:
+  enabled: False # Fuse wheel odometry as a velocity factor in the inertial window (topic/extrinsics in the sensor config)
+  sigma_v: 0.15 # 1-sigma of the wheel velocity measurement [m/s]
+  max_sync_delay_s: 0.05 # Wait this much sensor time for wheel data to bracket each LiDAR frame
+  planar_only: True # Constrain only the body-frame x/y displacement (ground robots)
+  estimate_scale: False # Estimate a shared multiplicative wheel scale (wheel radius error) in the window
+  scale_prior_sigma: 0.1 # Prior 1-sigma on the wheel scale around 1
+
 debug:
   publish_all_clouds: False # Publish all clouds (fine, coarse, deskewed)
   timing: False

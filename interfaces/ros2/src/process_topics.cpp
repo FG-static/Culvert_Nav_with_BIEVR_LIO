@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <memory>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialization.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -41,7 +42,10 @@ int main(int argc, char** argv) {
   LOG(I, config.max_num_threads > 0, "TBB parallelism limited to " << n_threads << " threads.");
 
   auto pipeline = std::make_shared<bievr::Pipeline>(config.pipeline_config);
-  auto synchronizer = std::make_shared<bievr::Synchronizer>(pipeline);
+  const bool wheel_input_enabled =
+      config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty();
+  auto synchronizer = std::make_shared<bievr::Synchronizer>(
+      pipeline, wheel_input_enabled, config.pipeline_config.wheel.max_sync_delay_s);
   auto lio_pub = std::make_shared<bievr::Publisher>(node, pipeline, "bievr_lio");
 
   // ROS2 has no ShapeShifter: discover the pointcloud topic's type from the
@@ -108,6 +112,25 @@ int main(int argc, char** argv) {
         }
         synchronizer->addImu(imu);
       });
+
+  // Optional wheel-odometry input for the window velocity factor. Only
+  // subscribed when enabled and a topic is configured. Keep the SharedPtr in
+  // main scope: destroying it at the end of the if block silently unsubscribes.
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_sub;
+  if (config.pipeline_config.wheel.enabled && !config.topic_config.wheel_topic.empty()) {
+    LOG(I, "Subscribing wheel odometry on '" << config.topic_config.wheel_topic << "'.");
+    wheel_sub = node->create_subscription<nav_msgs::msg::Odometry>(
+        config.topic_config.wheel_topic, sensor_qos,
+        [&](const nav_msgs::msg::Odometry::SharedPtr msg) {
+          bievr::WheelMeasurement wheel;
+          if (!bievr::msgToWheelMeasurement(*msg, wheel)) {
+            return;
+          }
+          synchronizer->addWheelOdometry(wheel);
+        });
+  } else if (config.pipeline_config.wheel.enabled) {
+    LOG(W, "Wheel odometry fusion is enabled but no wheel topic is configured.");
+  }
 
   rclcpp::spin(node);
   rclcpp::shutdown();

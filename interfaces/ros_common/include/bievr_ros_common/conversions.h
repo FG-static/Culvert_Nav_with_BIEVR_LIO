@@ -418,6 +418,24 @@ bool msgToImuMeasurement(const ImuMsgT& imu_msg, ImuMeasurement& imu) {
 }
 
 template <typename OdomMsgT>
+bool msgToWheelMeasurement(const OdomMsgT& odom_msg, WheelMeasurement& wheel) {
+  wheel.stamp = conv_detail::stampToNs(odom_msg.header.stamp);
+  if (wheel.stamp == 0) {
+    LOG(W, "Skipping wheel odometry message without valid timestamp.");
+    return false;
+  }
+
+  // Only the twist is used: nav_msgs/Odometry twist is the velocity of the
+  // child frame origin expressed in the child frame axes. The pose part is
+  // deliberately ignored (the LIO provides its own pose).
+  wheel.v_body << odom_msg.twist.twist.linear.x, odom_msg.twist.twist.linear.y,
+      odom_msg.twist.twist.linear.z;
+  wheel.yaw_rate = odom_msg.twist.twist.angular.z;
+
+  return true;
+}
+
+template <typename OdomMsgT>
 bool msgToTransform(const OdomMsgT& odom_msg, Transform& transform) {
   transform.translation() << odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y,
       odom_msg.pose.pose.position.z;

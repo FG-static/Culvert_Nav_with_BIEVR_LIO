@@ -9,6 +9,7 @@
 #include "bievr_lio/ls_optimizer.h"
 #include "bievr_lio/preprocess.h"
 #include "bievr_lio/utils.h"
+#include "bievr_lio/wheel_integrator.h"
 
 namespace bievr {
 
@@ -20,6 +21,7 @@ class Pipeline {
     ImuConfig imu;
     RegistrationConfig registration;
     BIEVRMap::Config map;
+    WheelConfig wheel;
     bool print_timing = false;
     bool publish_all_clouds = false;
     bool print_debug = false;      // when true, lower the log level to show DEBUG messages
@@ -46,7 +48,8 @@ class Pipeline {
   virtual ~Pipeline() = default;
 
   void processFrame(const std::vector<ImuMeasurement>& imu_data,
-                    const StampedIntensityPointcloud& pointcloud);
+                    const StampedIntensityPointcloud& pointcloud,
+                    const std::vector<WheelMeasurement>& wheel_data = {});
 
   template <typename T>
   void registerPublisher(std::function<void(const T&, const Header&, const std::string& topic,
@@ -73,6 +76,7 @@ class Pipeline {
   // State and optimization management
   bool addState(const uint64_t time, const Quaternion& quat, const V3& p, const V3& v);
   bool addImuIntegrator(ImuIntegratorPtr imu_integrator);
+  bool addWheelIntegrator(WheelIntegrator::Ptr wheel_integrator);
   bool optimizeInertialWindow();
 
   // Publishing
@@ -110,6 +114,15 @@ class Pipeline {
   Config config_;
   std::map<uint64_t, State> states_;
   std::map<uint64_t, ImuIntegratorPtr> imu_integrators_;
+  std::map<uint64_t, WheelIntegrator::Ptr> wheel_integrators_;
+  // Shared multiplicative wheel scale, optimized jointly with the window when
+  // config_.wheel.estimate_scale is set. 1 means the wheel speeds are trusted
+  // as-is. Kept as a 1-element array so its storage doubles as the ceres
+  // parameter block.
+  std::array<double, 1> wheel_scale_{{1.0}};
+  // RMS of the wheel velocity residuals over the latest window solve (body
+  // frame, m/s), shown on the dashboard. 0 when wheel fusion is disabled.
+  double wheel_residual_rms_ = 0.0;
 
   size_t seq_counter_ = 0;
   Phase phase_ = Phase::NeedBias;

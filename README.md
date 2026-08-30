@@ -299,6 +299,47 @@ from an accepted step. For a fixed alpha,
 should equal alpha up to floating-point error. Set `hard_project_weakest_translation: False` for the
 unmodified baseline.
 
+### Wheel odometry fusion
+
+Optional wheel-odometry fusion as a velocity factor inside the existing inertial
+window optimization. The scan-matched poses remain the only source of pose
+information (they stay fixed in the window, as before); the wheel factor
+constrains the optimized velocities, which improves the published twist and the
+velocity/bias/gravity consistency when the LiDAR registration is degenerate
+(e.g. long tunnel straightaways).
+
+The factor residual compares the state-implied average IMU-frame velocity over
+each state interval with the wheel-measured average velocity
+(`0.5·(R_iᵀ·v_i + R_jᵀ·v_j) − s·Δp_wheel/dt`), projected to the body x/y plane
+for ground robots (`planar_only`), with an optional shared scale `s` to absorb
+wheel-radius error (`estimate_scale`). Dividing by `dt` makes `sigma_v` a true
+velocity standard deviation and keeps the factor strength independent of the
+LiDAR frame rate.
+
+To enable, add to your sensor config (topic and extrinsics are sensor
+properties):
+
+```yaml
+topics:
+  wheel: "/odom"          # nav_msgs/Odometry, twist in the child frame
+wheel:
+  enabled: True
+# Optional extrinsic from the wheel-odometry child frame to the IMU frame.
+# Identity when omitted:
+# wheel_calibration:
+#   translation: [0.0, 0.0, 0.0]
+#   rotation: [1, 0, 0,
+#              0, 1, 0,
+#              0, 0, 1]
+```
+
+The noise and behaviour knobs live in `config/params.yaml` under `wheel:`
+(`sigma_v`, `max_sync_delay_s`, `planar_only`, `estimate_scale`,
+`scale_prior_sigma`). `max_sync_delay_s` is a sensor-time timeout: the
+synchronizer waits for a wheel sample at or after the LiDAR frame end, then
+falls back to LiDAR/IMU-only processing if the wheel stream is late. When
+enabled, the dashboard reports the wheel residual RMS and the estimated scale.
+
 ## Configuration
 
 The configuration is split in two files:

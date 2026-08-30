@@ -26,6 +26,19 @@ bool Synchronizer::addPointcloud(const StampedIntensityPointcloud& cloud) {
   return true;
 }
 
+bool Synchronizer::addWheelOdometry(const WheelMeasurement& wheel) {
+  if (!wheel_queue_.empty() && wheel.stamp < wheel_queue_.back().stamp) {
+    LOG(W, "Wheel odometry at " << wheel.stamp << " out of order. Skipping.");
+    return false;
+  }
+  // Wheel samples only accumulate; the pipeline is LiDAR-driven, so a wheel
+  // message cannot create a frame, but it can complete a frame already waiting
+  // for the wheel watermark.
+  wheel_queue_.push_back(wheel);
+  synchronizeData();
+  return true;
+}
+
 void Synchronizer::synchronizeData() {
   static const uint64_t kOverlapNs = sToNs(0.02);
 
@@ -49,6 +62,24 @@ void Synchronizer::synchronizeData() {
   const uint64_t t_pointcloud = pointcloud.end_stamp;
   if (imu_queue_.back().stamp < t_pointcloud) {
     return;
+  }
+
+  // When wheel fusion is active, wait until at least one wheel sample brackets
+  // the frame end. If the wheel stream is late or dead, use the IMU watermark as
+  // a deterministic sensor-time timeout so LiDAR/IMU processing cannot stall.
+  if (wheel_input_enabled_) {
+    const bool wheel_has_end_watermark =
+        !wheel_queue_.empty() && wheel_queue_.back().stamp >= t_pointcloud;
+    const bool wheel_wait_expired =
+        imu_queue_.back().stamp >= t_pointcloud + wheel_max_sync_delay_ns_;
+    if (!wheel_has_end_watermark && !wheel_wait_expired) {
+      return;
+    }
+    if (!wheel_has_end_watermark) {
+      LOG_EVERY(W, 100,
+                "Wheel watermark did not reach LiDAR frame end within "
+                    << nsToS(wheel_max_sync_delay_ns_) << " s; processing without an end bracket.");
+    }
   }
 
   std::vector<ImuMeasurement> imu_data;
@@ -77,7 +108,26 @@ void Synchronizer::synchronizeData() {
     }
   }
 
-  pipeline_->processFrame(imu_data, pointcloud);
+  // Cut the wheel slice covering (t_previous_frame, t_pointcloud], keeping the
+  // boundary sample for the next interval's start bracket.
+  std::vector<WheelMeasurement> wheel_data;
+  wheel_data.reserve(wheel_queue_.size() + 1);
+  if (has_last_wheel_) {
+    wheel_data.push_back(last_wheel_);
+  }
+  while (!wheel_queue_.empty() && wheel_queue_.front().stamp <= t_pointcloud) {
+    last_wheel_ = wheel_queue_.front();
+    has_last_wheel_ = true;
+    wheel_data.push_back(last_wheel_);
+    wheel_queue_.pop_front();
+  }
+  // The watermark sample belongs to the next interval as well, so use it as the
+  // current interval's end bracket without consuming it.
+  if (!wheel_queue_.empty() && wheel_queue_.front().stamp > t_pointcloud) {
+    wheel_data.push_back(wheel_queue_.front());
+  }
+
+  pipeline_->processFrame(imu_data, pointcloud, wheel_data);
   point_queue_.pop_front();
 }
 

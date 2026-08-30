@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -11,6 +12,7 @@
 #include "bievr_lio/timing.h"
 #include "bievr_lio/undistort.h"
 #include "bievr_lio/utils.h"
+#include "bievr_lio/wheel_factor.h"
 
 namespace bievr {
 
@@ -61,7 +63,8 @@ Pipeline::Pipeline(const Config& config) : config_(config) {
 }
 
 void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
-                            const StampedIntensityPointcloud& points_L) {
+                            const StampedIntensityPointcloud& points_L,
+                            const std::vector<WheelMeasurement>& wheel_data) {
   const auto frame_wall_start = std::chrono::steady_clock::now();
   timing::Timer step_timer("step");
 
@@ -169,12 +172,30 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
   map_->integratePoints(points_registered, &ranges);
   map_timer.Stop();
 
+  // Integrate the wheel-odometry slice over [t_i, t_j] for the window factor.
+  // The interval endpoints match the state times by construction (a state is
+  // added at every cloud end stamp), so one slice maps to one interval.
+  WheelIntegrator::Ptr wheel_integrator;
+  if (config_.wheel.enabled) {
+    V3 mean_gyro = V3::Zero();
+    for (const auto& imu_meas : imu) mean_gyro += imu_meas.gyro;
+    mean_gyro /= static_cast<double>(imu.size());
+    wheel_integrator = std::make_shared<WheelIntegrator>(config_.wheel, states_.rbegin()->first,
+                                                         imu.back().stamp);
+    // Add wheel measurements to the integrator and finalize it.
+    for (const auto& wheel : wheel_data) wheel_integrator->addMeasurement(wheel);
+    wheel_integrator->finalize(mean_gyro);
+  }
+
   // Bookkeeping and optimization of the intertial part of the state
   addState(imu.back().stamp, T_W_I.quaternion(), T_W_I.translation(), x_j_pred.v);
 
   timing::Timer imu_opt("07_imu_opt");
   if (map_->size() > config_.min_map_size_for_imu_opt) {
     addImuIntegrator(imu_integrator);
+    if (wheel_integrator && wheel_integrator->valid()) {
+      addWheelIntegrator(wheel_integrator);
+    }
   }
   optimizeInertialWindow();
   imu_opt.Stop();
@@ -206,6 +227,9 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
   }
 
   if (config_.print_dashboard) {
+    dashboard_.wheel_enabled = config_.wheel.enabled;
+    dashboard_.wheel_residual_rms = wheel_residual_rms_;
+    dashboard_.wheel_scale = wheel_scale_[0];
     printDashboard(dashboard_, header.stamp, T_W_I, x_j_pred.v, acc_bias_, gyro_bias_,
                    timing::Timing::GetMeanSeconds("step"), timing::Timing::GetMaxSeconds("step"),
                    n_effective_points);
@@ -296,9 +320,10 @@ bool Pipeline::addState(const uint64_t time, const Quaternion& quat, const V3& p
   const uint64_t allowed_oldest_time = sToNs(allowed_oldest_time_s);
   for (auto it = states_.begin(); it != states_.end();) {
     // Remove states that are outside of the window length, along with their corresponding IMU
-    // integrators
+    // integrators and wheel integrators
     if (it->first >= allowed_oldest_time) break;
     imu_integrators_.erase(it->first);
+    wheel_integrators_.erase(it->first);
     it = states_.erase(it);
   }
   return true;
@@ -312,6 +337,17 @@ bool Pipeline::addImuIntegrator(ImuIntegratorPtr imu_integrator) {
   }
 
   imu_integrators_[time] = imu_integrator;
+  return true;
+}
+
+bool Pipeline::addWheelIntegrator(WheelIntegrator::Ptr wheel_integrator) {
+  uint64_t time = wheel_integrator->startTime();
+  if (states_.find(time) == states_.end()) {
+    LOG(D, "Time " << time << " does not exist in the Pipeline. Skipping wheel integrator.");
+    return false;
+  }
+
+  wheel_integrators_[time] = wheel_integrator;
   return true;
 }
 
@@ -356,6 +392,63 @@ bool Pipeline::optimizeInertialWindow() {
     if (first) {
       problem.SetParameterBlockConstant(state_i.v.data());
       first = false;
+    }
+  }
+
+  // Wheel-odometry velocity factors between the same consecutive states the
+  // IMU factors span. Poses are constant blocks (set above), which the wheel
+  // factor relies on by capturing the rotations at construction time.
+  wheel_residual_rms_ = 0.0;
+  if (config_.wheel.enabled && !wheel_integrators_.empty()) {
+    const double weight = 1.0 / config_.wheel.sigma_v;
+    size_t n_factors = 0;
+    for (const auto& integrator_it : wheel_integrators_) {
+      const WheelIntegrator::Ptr& wheel_integrator = integrator_it.second;
+      if (!wheel_integrator->valid()) continue;
+      State& state_i = states_.at(wheel_integrator->startTime());
+      State& state_j = states_.at(wheel_integrator->endTime());
+      if (config_.wheel.estimate_scale) {
+        ceres::CostFunction* wheel_cost =
+            new WheelVelocityScaleFactor(state_i.quat, state_j.quat, *wheel_integrator, weight,
+                                         config_.wheel.planar_only);
+        problem.AddResidualBlock(wheel_cost, loss_function, state_i.v.data(), state_j.v.data(),
+                                 wheel_scale_.data());
+      } else {
+        ceres::CostFunction* wheel_cost =
+            new WheelVelocityFactor(state_i.quat, state_j.quat, *wheel_integrator, weight,
+                                    config_.wheel.planar_only);
+        problem.AddResidualBlock(wheel_cost, loss_function, state_i.v.data(), state_j.v.data());
+      }
+      ++n_factors;
+    }
+    if (config_.wheel.estimate_scale && n_factors > 0) {
+      // Keep the shared scale close to 1 so it cannot absorb real velocity
+      // information when the wheel constraints get sparse.
+      ceres::CostFunction* scale_prior_cost =
+          new WheelScalePriorFactor(config_.wheel.scale_prior_sigma);
+      problem.AddResidualBlock(scale_prior_cost, loss_function, wheel_scale_.data());
+    }
+
+    // Post-solve residual RMS for the dashboard, evaluated with the optimized
+    // velocities (and scale). Weight 1 keeps the value in physical m/s.
+    size_t n_residual_rows = 0;
+    double squared_sum = 0.0;
+    for (const auto& integrator_it : wheel_integrators_) {
+      const WheelIntegrator::Ptr& wheel_integrator = integrator_it.second;
+      if (!wheel_integrator->valid()) continue;
+      const State& state_i = states_.at(wheel_integrator->startTime());
+      const State& state_j = states_.at(wheel_integrator->endTime());
+      std::array<double, 3> residuals{};
+      wheel_factor_internal::evaluateResidual(
+          wheel_factor_internal::makeResidualData(state_i.quat, state_j.quat, *wheel_integrator,
+                                                  1.0, config_.wheel.planar_only),
+          state_i.v, state_j.v, wheel_scale_[0], residuals.data(), nullptr, nullptr, nullptr);
+      const int n_rows = config_.wheel.planar_only ? 2 : 3;
+      for (int k = 0; k < n_rows; ++k) squared_sum += residuals[k] * residuals[k];
+      n_residual_rows += n_rows;
+    }
+    if (n_residual_rows > 0) {
+      wheel_residual_rms_ = std::sqrt(squared_sum / static_cast<double>(n_residual_rows));
     }
   }
 
