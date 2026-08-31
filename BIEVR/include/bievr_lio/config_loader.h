@@ -204,6 +204,22 @@ inline void printConfigOverview(const Config& config) {
   os << "  log_path:             " << (hc.log_path.empty() ? "<none>" : hc.log_path) << "\n";
   os << "  registration_metrics_path: "
      << (hc.registration_metrics_path.empty() ? "<none>" : hc.registration_metrics_path) << "\n";
+  os << "  wheel_slip_path:      "
+     << (hc.wheel_slip_path.empty() ? "<none>" : hc.wheel_slip_path) << "\n";
+  if (!hc.wheel_slip_path.empty()) {
+    os << "slip monitor (hard interval gate):\n";
+    os << "  abs_threshold_mps:    " << hc.slip.abs_threshold_mps << "\n";
+    os << "  rel_threshold:        " << hc.slip.rel_threshold << "\n";
+    os << "  wz_threshold_rps:     " << hc.slip.wz_threshold_rps << "\n";
+    os << "  suspect_abs_mps:      " << hc.slip.suspect_abs_mps << "\n";
+    os << "  suspect_rel:          " << hc.slip.suspect_rel << "\n";
+    os << "  lidar_velocity_window_frames: " << hc.slip.lidar_velocity_window_frames << "\n";
+    os << "  high_window_frames:   " << hc.slip.high_window_frames << "\n";
+    os << "  high_votes_required:  " << hc.slip.high_votes_required << "\n";
+    os << "  relative_min_speed_mps: " << hc.slip.relative_min_speed_mps << "\n";
+    os << "  recover_time_s:       " << hc.slip.recover_time_s << "\n";
+    os << "  speed_floor_mps:      " << hc.slip.speed_floor_mps << "\n";
+  }
   os << "calibration (LiDAR -> IMU):\n";
   printExtrinsic(os, "T_I_L", hc.T_I_L);
   if (hc.wheel.enabled) {
@@ -323,6 +339,55 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
                                     hc.wheel.scale_prior_sigma, hc.wheel.scale_prior_sigma)) {
     return false;
   }
+  // Slip monitor thresholds (v2 log-only; calibrate on flooded-site data
+  // before using them to gate anything). Keep the old n_high_frames key as a
+  // compatibility alias for high_votes_required so existing run configs do
+  // not silently change behaviour.
+  if (!config_internal::getPositive(yaml, "wheel", "slip_abs_threshold_mps",
+                                    hc.slip.abs_threshold_mps, hc.slip.abs_threshold_mps) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_rel_threshold", hc.slip.rel_threshold,
+                                    hc.slip.rel_threshold) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_wz_threshold_rps",
+                                    hc.slip.wz_threshold_rps, hc.slip.wz_threshold_rps) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_suspect_abs_mps",
+                                    hc.slip.suspect_abs_mps, hc.slip.suspect_abs_mps) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_suspect_rel", hc.slip.suspect_rel,
+                                    hc.slip.suspect_rel) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_suspect_wz_rps",
+                                    hc.slip.suspect_wz_rps, hc.slip.suspect_wz_rps) ||
+      !config_internal::getPositive<int>(yaml, "wheel", "slip_lidar_velocity_window_frames",
+                                         hc.slip.lidar_velocity_window_frames,
+                                         hc.slip.lidar_velocity_window_frames) ||
+      !config_internal::getPositive<int>(yaml, "wheel", "slip_high_window_frames",
+                                         hc.slip.high_window_frames,
+                                         hc.slip.high_window_frames) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_recover_time_s",
+                                    hc.slip.recover_time_s, hc.slip.recover_time_s) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_speed_floor_mps",
+                                    hc.slip.speed_floor_mps, hc.slip.speed_floor_mps) ||
+      !config_internal::getPositive(yaml, "wheel", "slip_relative_min_speed_mps",
+                                    hc.slip.relative_min_speed_mps,
+                                    hc.slip.relative_min_speed_mps)) {
+    return false;
+  }
+  int legacy_high_votes_required = hc.slip.high_votes_required;
+  if (!config_internal::getPositive<int>(yaml, "wheel", "slip_n_high_frames",
+                                         hc.slip.high_votes_required,
+                                         legacy_high_votes_required)) {
+    return false;
+  }
+  hc.slip.high_votes_required = legacy_high_votes_required;
+  if (!config_internal::getPositive<int>(yaml, "wheel", "slip_high_votes_required",
+                                         hc.slip.high_votes_required,
+                                         hc.slip.high_votes_required)) {
+    return false;
+  }
+  if (hc.slip.high_votes_required > hc.slip.high_window_frames) {
+    LOG(E, "Config error: 'wheel.slip_high_votes_required' must be <= "
+           "'wheel.slip_high_window_frames', got "
+               << hc.slip.high_votes_required << " > " << hc.slip.high_window_frames << ".");
+    return false;
+  }
   // Extrinsic from the wheel-odometry child frame to the IMU frame. Optional:
   // identity when the section is absent, hard error when half-supplied.
   const std::vector<double> wheel_t_vec =
@@ -343,6 +408,7 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.log_path = yaml.get<std::string>("debug", "trajectory_path", "");
   hc.registration_metrics_path =
       yaml.get<std::string>("debug", "registration_metrics_path", "");
+  hc.wheel_slip_path = yaml.get<std::string>("debug", "wheel_slip_path", "");
 
   // --- dashboard (live status print) ---
   hc.print_dashboard = yaml.get<bool>("debug", "dashboard", false);

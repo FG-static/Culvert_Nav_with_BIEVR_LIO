@@ -16,7 +16,7 @@
 
 namespace bievr {
 
-Pipeline::Pipeline(const Config& config) : config_(config) {
+Pipeline::Pipeline(const Config& config) : config_(config), slip_detector_(config.slip) {
   map_ = std::make_shared<BIEVRMap>(config_.map);
 
   if (!config_.log_path.empty()) {
@@ -38,6 +38,24 @@ Pipeline::Pipeline(const Config& config) : config_(config) {
     } else {
       config_.registration.collect_diagnostics = true;
       writeRegistrationMetricsHeader();
+    }
+  }
+
+  if (!config_.wheel_slip_path.empty()) {
+    if (!config_.wheel.enabled) {
+      LOG(W, "Wheel slip logging requested but wheel odometry is disabled; "
+             "the slip log will stay empty.");
+    }
+    LOG(I, "Wheel slip logging to " << config_.wheel_slip_path);
+    slip_log_ = std::make_shared<std::ofstream>(config_.wheel_slip_path, std::ios::trunc);
+    if (!slip_log_->is_open()) {
+      LOG(E, "Error opening wheel slip log file '" << config_.wheel_slip_path
+                                                   << "'. Slip logging disabled.");
+      slip_log_.reset();
+    } else {
+      // The Htt information metrics come from the registration diagnostics.
+      config_.registration.collect_diagnostics = true;
+      writeSlipLogHeader();
     }
   }
 
@@ -190,10 +208,31 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
   // Bookkeeping and optimization of the intertial part of the state
   addState(imu.back().stamp, T_W_I.quaternion(), T_W_I.translation(), x_j_pred.v);
 
+  // Wheel-slip monitor: run before optimization so wheel factors are only added
+  // while the state machine reads NORMAL. Compares the wheel interval against the
+  // fused trajectory, gyro, and registration forward observability.
+  SlipDetectionOutput slip_output;
+  slip_output.state = slip_detector_.state();
+  double slip_dt_s = 0.0;
+  SlipDetectionInput slip_input;
+  if (config_.wheel.enabled && wheel_integrator && wheel_integrator->valid() &&
+      states_.size() >= 2) {
+    const State& state_i = states_.at(wheel_integrator->startTime());
+    const State& state_j = states_.at(wheel_integrator->endTime());
+    slip_dt_s = wheel_integrator->durationS();
+    slip_input = buildSlipInput(*wheel_integrator, state_i, state_j, x_j_pred.v, imu,
+                                optimizer.diagnostics());
+    slip_output = slip_detector_.update(slip_input);
+    if (slip_log_) {
+      logSlip(header.stamp, header.seq, slip_dt_s, slip_input, slip_output);
+    }
+  }
+  const bool wheel_factors_allowed = slip_output.state == SlipState::Normal;
+
   timing::Timer imu_opt("07_imu_opt");
   if (map_->size() > config_.min_map_size_for_imu_opt) {
     addImuIntegrator(imu_integrator);
-    if (wheel_integrator && wheel_integrator->valid()) {
+    if (wheel_factors_allowed && wheel_integrator && wheel_integrator->valid()) {
       addWheelIntegrator(wheel_integrator);
     }
   }
@@ -397,9 +436,12 @@ bool Pipeline::optimizeInertialWindow() {
 
   // Wheel-odometry velocity factors between the same consecutive states the
   // IMU factors span. Poses are constant blocks (set above), which the wheel
-  // factor relies on by capturing the rotations at construction time.
+  // factor relies on by capturing the rotations at construction time. The
+  // map contains only intervals accepted by the slip gate; an observation
+  // becoming SUSPECT/SLIP does not remove previously accepted history.
   wheel_residual_rms_ = 0.0;
-  if (config_.wheel.enabled && !wheel_integrators_.empty()) {
+  if (config_.wheel.enabled &&
+      !wheel_integrators_.empty()) {
     const double weight = 1.0 / config_.wheel.sigma_v;
     size_t n_factors = 0;
     for (const auto& integrator_it : wheel_integrators_) {
@@ -623,6 +665,81 @@ void Pipeline::logRegistrationMetrics(uint64_t stamp_ns, uint32_t frame_id,
       << translation_correction_world.x() << ',' << translation_correction_world.y() << ','
       << translation_correction_world.z() << ',' << translation_correction_world.norm() << '\n';
   // Preserve the last diagnostic frame even if an experimental run terminates early.
+  out.flush();
+}
+
+SlipDetectionInput Pipeline::buildSlipInput(const WheelIntegrator& wheel_integrator,
+                                            const State& state_i, const State& state_j,
+                                            const V3& imu_pred_v,
+                                            const std::vector<ImuMeasurement>& imu,
+                                            const RegistrationDiagnostics& diag) const {
+
+  const double dt_s = wheel_integrator.durationS();
+  const Rotation R_i = state_i.quat.toRotationMatrix();
+
+  SlipDetectionInput slip_input;
+  slip_input.dt = dt_s;
+  slip_input.wheel_v = wheel_integrator.displacement() / dt_s;
+  slip_input.wheel_wz = wheel_integrator.meanYawRate();
+  slip_input.lidar_v = R_i.transpose() * (state_j.p - state_i.p) / dt_s;
+  slip_input.imu_pred_vx = (state_i.quat.inverse() * imu_pred_v).x();
+
+  V3 acc_mean = V3::Zero();
+  V3 gyro_mean = V3::Zero();
+  for (const auto& imu_meas : imu) {
+    acc_mean += imu_meas.acc;
+    gyro_mean += imu_meas.gyro;
+  }
+  acc_mean /= static_cast<double>(imu.size());
+  gyro_mean /= static_cast<double>(imu.size());
+  const V3 gravity_body = R_i.transpose() * gravity_dir_ * kGMagnitude;
+  slip_input.imu_ax = (acc_mean - acc_bias_ - gravity_body).x();
+  slip_input.gyro_wz = (gyro_mean - gyro_bias_).z();
+
+  if (diag.valid) {
+    double forward_info = 0.0;
+    for (int i = 0; i < 3; ++i) {
+      const double d = diag.translation_eigenvectors.col(i).x();
+      forward_info += diag.translation_eigenvalues(i) * d * d;
+    }
+    slip_input.htt_forward_information =
+        forward_info / static_cast<double>(std::max<size_t>(diag.effective_points, 1));
+    slip_input.htt_degeneracy_ratio = diag.translation_degeneracy_ratio;
+    slip_input.n_effective_points = static_cast<double>(diag.effective_points);
+  }
+  return slip_input;
+}
+
+void Pipeline::writeSlipLogHeader() {
+  if (!slip_log_ || !slip_log_->is_open()) return;
+
+  std::ofstream& out = *slip_log_;
+  out << "schema_version,stamp_ns,stamp_s,frame_id,dt_s,"
+         "wheel_vx,wheel_vy,wheel_wz,lidar_vx,lidar_vy,lidar_v_filtered_x,lidar_v_filtered_y,"
+         "imu_pred_vx,imu_ax,gyro_wz,r_x,r_y,raw_r_x,raw_r_y,r_wz,v_ref,"
+         "relative_speed_active,high_votes,high_window_size,"
+         "htt_forward_information,htt_degeneracy_ratio,n_effective_points,"
+         "slip_score,slip_state,suggested_wheel_weight\n";
+  out.flush();
+}
+
+void Pipeline::logSlip(uint64_t stamp_ns, uint32_t frame_id, double dt_s,
+                       const SlipDetectionInput& input, const SlipDetectionOutput& output) {
+  if (!slip_log_ || !slip_log_->is_open()) return;
+
+  std::ofstream& out = *slip_log_;
+  out << std::setprecision(9);
+  out << 2 << ',' << stamp_ns << ',' << nsToS(stamp_ns) << ',' << frame_id << ',' << dt_s << ','
+      << input.wheel_v.x() << ',' << input.wheel_v.y() << ',' << input.wheel_wz << ','
+      << input.lidar_v.x() << ',' << input.lidar_v.y() << ',' << output.lidar_v_filtered.x() << ','
+      << output.lidar_v_filtered.y() << ',' << input.imu_pred_vx << ',' << input.imu_ax << ','
+      << input.gyro_wz << ',' << output.r_x << ',' << output.r_y << ',' << output.raw_r_x << ','
+      << output.raw_r_y << ',' << output.r_wz << ',' << output.v_ref << ','
+      << static_cast<int>(output.relative_speed_active) << ',' << output.high_votes << ','
+      << output.high_window_size << ',' << input.htt_forward_information << ','
+      << input.htt_degeneracy_ratio << ',' << input.n_effective_points << ',' << output.score << ','
+      << static_cast<int>(output.state) << ',' << output.suggested_weight << '\n';
+  // Preserve the last row even if a run terminates early.
   out.flush();
 }
 

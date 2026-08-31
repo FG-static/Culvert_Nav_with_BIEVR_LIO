@@ -340,6 +340,41 @@ synchronizer waits for a wheel sample at or after the LiDAR frame end, then
 falls back to LiDAR/IMU-only processing if the wheel stream is late. When
 enabled, the dashboard reports the wheel residual RMS and the estimated scale.
 
+### Wheel slip monitor (log-only)
+
+When `debug.wheel_slip_path` points to a CSV file, a per-frame slip monitor
+runs alongside the fusion. It compares the wheel interval displacement against
+the fused trajectory (`r_x`, `r_y`) and the wheel yaw rate against the gyro
+(`r_wz`), logs the forward-direction translation information
+`e_x^T·Htt·e_x/N_eff` and the translation degeneracy ratio from the scan
+matcher, and runs a hysteresis state machine
+(`NORMAL → SUSPECT → SLIP → RECOVERING`): the LiDAR velocity is a short,
+time-weighted history controlled by `slip_lidar_velocity_window_frames`; SLIP
+needs `slip_high_votes_required` high residual frames within the sliding
+`slip_high_window_frames` window. A high frame requires both `|r_x|` and
+`|r_x|/v_ref` to exceed their thresholds, except that the relative check is
+disabled below `slip_relative_min_speed_mps` (the absolute check remains
+active). Recovery needs both residuals below the low thresholds for
+`slip_recover_time_s`. Thresholds live in `config/params.yaml` under
+`wheel:slip_*` and **must be recalibrated from flooded-site bags before being
+used to gate the fusion**. The
+`suggested_wheel_weight` column is a log-only hint (1 below SLIP level,
+ramping to 0 by twice that level) for a future gating policy; nothing is
+gated in this version. A `tools/inject_wheel_slip.py` helper synthesizes slip
+into an existing bag for validation.
+
+The legacy `slip_n_high_frames` key is accepted as an alias for
+`slip_high_votes_required`; new configurations should use the explicit
+K-of-N names above. The CSV schema version is `2` and includes raw/filtered
+LiDAR residuals, the relative-speed gate, and the current vote count.
+
+Known limitation (validated experimentally): along a fully degenerate
+direction whose pose increments follow the velocity prediction (hard
+projection active), the pose chain absorbs wheel slip and the `r_x` residual
+collapses — the monitor then cannot see along-track slip. The
+raw-acceleration channel (`imu_ax`) does not pass through the state and
+remains informative; this drives the v2 design.
+
 ## Configuration
 
 The configuration is split in two files:

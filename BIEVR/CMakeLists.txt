@@ -41,9 +41,19 @@ add_library(${PROJECT_NAME}
   src/timing.cpp
   src/undistort.cpp
   src/utils.cpp
+  src/slip_detector.cpp
   src/wheel_factor.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+
+include(CTest)
+
+if(BUILD_TESTING)
+  add_executable(test_slip_detector tests/test_slip_detector.cpp)
+  target_compile_features(test_slip_detector PRIVATE cxx_std_20)
+  target_link_libraries(test_slip_detector PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
+  add_test(NAME test_slip_detector COMMAND test_slip_detector)
+endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

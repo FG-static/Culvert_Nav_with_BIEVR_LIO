@@ -33,6 +33,20 @@ wheel:
   planar_only: True # Constrain only the body-frame x/y displacement (ground robots)
   estimate_scale: False # Estimate a shared multiplicative wheel scale (wheel radius error) in the window
   scale_prior_sigma: 0.1 # Prior 1-sigma on the wheel scale around 1
+  # Slip monitor (v2 log-only; nothing is gated). Thresholds are first guesses —
+  # re-calibrate from flooded-site bags before wiring them to the fusion.
+  slip_abs_threshold_mps: 0.20 # SLIP entry needs |r_x| above this AND the relative bound below
+  slip_rel_threshold: 0.35 # SLIP entry needs |r_x|/v_ref above this AND the absolute bound below
+  slip_wz_threshold_rps: 0.30 # Yaw-rate channel high threshold (score only)
+  slip_suspect_abs_mps: 0.12 # SUSPECT entry / recovery reference, absolute
+  slip_suspect_rel: 0.20 # SUSPECT entry / recovery reference, relative
+  slip_suspect_wz_rps: 0.18 # Yaw-rate low threshold (score only)
+  slip_lidar_velocity_window_frames: 3 # Time-weighted LiDAR velocity smoothing history
+  slip_high_window_frames: 5 # Sliding vote window for high residual frames
+  slip_high_votes_required: 3 # K high frames required within the window
+  slip_relative_min_speed_mps: 0.15 # Disable relative residual below this speed
+  slip_recover_time_s: 0.75 # Below low for this long to return NORMAL (0.5-1)
+  slip_speed_floor_mps: 0.1 # v_ref floor against low-speed ratio amplification
 
 debug:
   publish_all_clouds: False # Publish all clouds (fine, coarse, deskewed)
@@ -43,5 +57,7 @@ debug:
   trajectory_path: "" # Path to save trajectory. If empty, logs will not be saved.
   # Per-frame registration observability/quality CSV. Empty disables the extra final-pose linearization.
   registration_metrics_path: ""
+  # Per-frame wheel-slip consistency CSV (v2 log-only). Empty disables it.
+  wheel_slip_path: ""
 
 max_num_threads: 0 # 0 = automatic, >0 = number of threads to use for parallel processing

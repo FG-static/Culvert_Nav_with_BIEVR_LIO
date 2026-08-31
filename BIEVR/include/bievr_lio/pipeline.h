@@ -8,6 +8,7 @@
 #include "bievr_lio/log++.h"
 #include "bievr_lio/ls_optimizer.h"
 #include "bievr_lio/preprocess.h"
+#include "bievr_lio/slip_detector.h"
 #include "bievr_lio/utils.h"
 #include "bievr_lio/wheel_integrator.h"
 
@@ -22,6 +23,7 @@ class Pipeline {
     RegistrationConfig registration;
     BIEVRMap::Config map;
     WheelConfig wheel;
+    SlipConfig slip;
     bool print_timing = false;
     bool publish_all_clouds = false;
     bool print_debug = false;      // when true, lower the log level to show DEBUG messages
@@ -35,6 +37,11 @@ class Pipeline {
     // Optional per-frame CSV with registration observability and quality metrics.
     // Empty disables the extra final-pose linearization and file output.
     std::string registration_metrics_path = "";
+    // Optional per-frame CSV with wheel-slip consistency diagnostics. Empty
+    // disables the log file; slip monitoring still runs whenever wheel fusion is
+    // enabled and gates wheel factors to NORMAL intervals only. Implies
+    // registration.collect_diagnostics, like registration_metrics_path.
+    std::string wheel_slip_path = "";
 
     size_t min_points_for_map_init = 100;
     size_t map_size_running_threshold = 5;
@@ -110,6 +117,13 @@ class Pipeline {
                               size_t undistorted_points, size_t selected_points,
                               size_t fine_points, size_t coarse_points, double frame_time_ms,
                               double registration_time_ms);
+  void writeSlipLogHeader();
+  void logSlip(uint64_t stamp_ns, uint32_t frame_id, double dt_s,
+               const SlipDetectionInput& input, const SlipDetectionOutput& output);
+  SlipDetectionInput buildSlipInput(const WheelIntegrator& wheel_integrator,
+                                    const State& state_i, const State& state_j,
+                                    const V3& imu_pred_v, const std::vector<ImuMeasurement>& imu,
+                                    const RegistrationDiagnostics& diag) const;
 
   Config config_;
   std::map<uint64_t, State> states_;
@@ -123,6 +137,11 @@ class Pipeline {
   // RMS of the wheel velocity residuals over the latest window solve (body
   // frame, m/s), shown on the dashboard. 0 when wheel fusion is disabled.
   double wheel_residual_rms_ = 0.0;
+  // Wheel-slip monitor: gates wheel factors to SlipState::Normal and optionally
+  // logs per-frame CSV. slip_detector_ must be declared after config_ so it can
+  // be constructed from config_.slip in the constructor's init list.
+  SlipDetector slip_detector_;
+  std::shared_ptr<std::ofstream> slip_log_;
 
   size_t seq_counter_ = 0;
   Phase phase_ = Phase::NeedBias;

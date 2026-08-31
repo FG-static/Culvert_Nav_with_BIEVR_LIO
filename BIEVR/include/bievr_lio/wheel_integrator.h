@@ -67,6 +67,8 @@ class WheelIntegrator {
   void addMeasurement(const WheelMeasurement& wheel) {
     const Rotation R_I_W = config_.T_I_W.rotation();
     const V3 v_I = R_I_W * wheel.v_body;
+    yaw_rate_sum_ += wheel.yaw_rate;
+    ++yaw_rate_count_;
     if (wheel.stamp <= t_start_) {
       if (t_start_ - wheel.stamp <= sToNs(kMaxBracketAgeS)) {
         has_start_bracket_ = true;
@@ -115,6 +117,11 @@ class WheelIntegrator {
   const V3& displacement() const { return delta_p_I_; }
   double durationS() const { return nsToS(t_end_ - t_start_); }
   int numSamples() const { return num_samples_; }
+  // Mean raw yaw rate over all samples handed to this interval (brackets
+  // included). 0 when no sample carried a yaw rate.
+  double meanYawRate() const {
+    return yaw_rate_count_ > 0 ? yaw_rate_sum_ / yaw_rate_count_ : 0.0;
+  }
   uint64_t startTime() const { return t_start_; }
   uint64_t endTime() const { return t_end_; }
 
@@ -130,6 +137,8 @@ class WheelIntegrator {
   V3 v_end_I_ = V3::Zero();
   uint64_t last_stamp_ = 0;
   int num_samples_ = 0;
+  double yaw_rate_sum_ = 0.0;
+  int yaw_rate_count_ = 0;
   bool has_start_bracket_ = false;
   bool has_end_bracket_ = false;
   bool finalized_ = false;
