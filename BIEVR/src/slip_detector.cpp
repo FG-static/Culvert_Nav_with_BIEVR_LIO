@@ -39,16 +39,22 @@ double SlipDetector::relativeResidual(const SlipDetectionInput& input, double re
   return std::abs(residual) / speedReference(input);
 }
 
-bool SlipDetector::aboveLowX(const SlipDetectionInput& input) const {
-  const double r_x = input.wheel_v.x() - input.lidar_v.x();
-  return std::abs(r_x) > config_.suspect_abs_mps ||
-         relativeResidual(input, r_x) > config_.suspect_rel;
+double SlipDetector::yawResidual(const SlipDetectionInput& input) const {
+  return input.wheel_wz - input.gyro_wz;
 }
 
-bool SlipDetector::belowLowX(const SlipDetectionInput& input) const {
+bool SlipDetector::aboveLow(const SlipDetectionInput& input) const {
+  const double r_x = input.wheel_v.x() - input.lidar_v.x();
+  return std::abs(r_x) > config_.suspect_abs_mps ||
+         relativeResidual(input, r_x) > config_.suspect_rel ||
+         std::abs(yawResidual(input)) > config_.suspect_wz_rps;
+}
+
+bool SlipDetector::belowLow(const SlipDetectionInput& input) const {
   const double r_x = input.wheel_v.x() - input.lidar_v.x();
   return std::abs(r_x) <= config_.suspect_abs_mps &&
-         relativeResidual(input, r_x) <= config_.suspect_rel;
+         relativeResidual(input, r_x) <= config_.suspect_rel &&
+         std::abs(yawResidual(input)) <= config_.suspect_wz_rps;
 }
 
 bool SlipDetector::aboveHighX(const SlipDetectionInput& input) const {
@@ -58,6 +64,14 @@ bool SlipDetector::aboveHighX(const SlipDetectionInput& input) const {
   return std::abs(r_x) > config_.abs_threshold_mps &&
          (!relativeSpeedActive(input) ||
           relativeResidual(input, r_x) > config_.rel_threshold);
+}
+
+bool SlipDetector::aboveHighWz(const SlipDetectionInput& input) const {
+  return std::abs(yawResidual(input)) > config_.wz_threshold_rps;
+}
+
+bool SlipDetector::aboveHigh(const SlipDetectionInput& input) const {
+  return aboveHighX(input) || aboveHighWz(input);
 }
 
 SlipDetectionOutput SlipDetector::update(const SlipDetectionInput& input) {
@@ -89,7 +103,7 @@ SlipDetectionOutput SlipDetector::update(const SlipDetectionInput& input) {
   // by twice that level. Pure function of the score, no hysteresis.
   out.suggested_weight = std::clamp(2.0 - out.score, 0.0, 1.0);
 
-  const bool high = aboveHighX(effective_input);
+  const bool high = aboveHigh(effective_input);
   const int max_high_history = std::max(1, config_.high_window_frames);
   high_history_.push_back(high);
   while (static_cast<int>(high_history_.size()) > max_high_history) {
@@ -104,7 +118,7 @@ SlipDetectionOutput SlipDetector::update(const SlipDetectionInput& input) {
     case SlipState::Suspect:
       if (high_vote) {
         state_ = SlipState::Slip;
-      } else if (aboveLowX(effective_input)) {
+      } else if (aboveLow(effective_input)) {
         state_ = SlipState::Suspect;
       } else {
         state_ = SlipState::Normal;
@@ -117,7 +131,7 @@ SlipDetectionOutput SlipDetector::update(const SlipDetectionInput& input) {
         // Re-enter (or stay in) SLIP; the recovery clock restarts.
         below_low_time_s_ = 0.0;
         state_ = SlipState::Slip;
-      } else if (belowLowX(effective_input)) {
+      } else if (belowLow(effective_input)) {
         below_low_time_s_ += input.dt;
         state_ = SlipState::Recovering;
         if (below_low_time_s_ >= config_.recover_time_s) {

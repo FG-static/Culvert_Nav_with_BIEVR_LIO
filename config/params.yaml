@@ -33,14 +33,15 @@ wheel:
   planar_only: True # Constrain only the body-frame x/y displacement (ground robots)
   estimate_scale: False # Estimate a shared multiplicative wheel scale (wheel radius error) in the window
   scale_prior_sigma: 0.1 # Prior 1-sigma on the wheel scale around 1
-  # Slip monitor (v2 log-only; nothing is gated). Thresholds are first guesses —
-  # re-calibrate from flooded-site bags before wiring them to the fusion.
-  slip_abs_threshold_mps: 0.20 # SLIP entry needs |r_x| above this AND the relative bound below
-  slip_rel_threshold: 0.35 # SLIP entry needs |r_x|/v_ref above this AND the absolute bound below
-  slip_wz_threshold_rps: 0.30 # Yaw-rate channel high threshold (score only)
-  slip_suspect_abs_mps: 0.12 # SUSPECT entry / recovery reference, absolute
-  slip_suspect_rel: 0.20 # SUSPECT entry / recovery reference, relative
-  slip_suspect_wz_rps: 0.18 # Yaw-rate low threshold (score only)
+  slip_gate_factors: True # Add wheel factors only in NORMAL; false keeps every interval (ungated ablation)
+  # Slip monitor: wheel factors are added only while the state is NORMAL.
+  # Thresholds are simulation first guesses (clean-bag |r_wz|~0, |r_x|~0.03).
+  slip_abs_threshold_mps: 0.20 # Translation high: |r_x| above this AND the relative bound below
+  slip_rel_threshold: 0.35 # Translation high: |r_x|/v_ref above this AND the absolute bound below
+  slip_wz_threshold_rps: 0.25 # Yaw high: |r_wz| above this (OR with translation for the K-of-N vote)
+  slip_suspect_abs_mps: 0.12 # SUSPECT entry / recovery, translation absolute
+  slip_suspect_rel: 0.20 # SUSPECT entry / recovery, translation relative
+  slip_suspect_wz_rps: 0.12 # SUSPECT entry / recovery, yaw absolute
   slip_lidar_velocity_window_frames: 3 # Time-weighted LiDAR velocity smoothing history
   slip_high_window_frames: 5 # Sliding vote window for high residual frames
   slip_high_votes_required: 3 # K high frames required within the window
@@ -57,7 +58,10 @@ debug:
   trajectory_path: "" # Path to save trajectory. If empty, logs will not be saved.
   # Per-frame registration observability/quality CSV. Empty disables the extra final-pose linearization.
   registration_metrics_path: ""
-  # Per-frame wheel-slip consistency CSV (v2 log-only). Empty disables it.
+  # Per-frame wheel-slip consistency CSV. Empty disables the file; the monitor
+  # still runs whenever wheel fusion is enabled.
   wheel_slip_path: ""
+  # Per-frame published body-frame twist after the inertial window solve. Empty disables.
+  odometry_twist_path: ""
 
 max_num_threads: 0 # 0 = automatic, >0 = number of threads to use for parallel processing

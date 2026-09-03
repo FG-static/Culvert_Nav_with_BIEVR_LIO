@@ -188,6 +188,7 @@ inline void printConfigOverview(const Config& config) {
     os << "  max_sync_delay_s:     " << hc.wheel.max_sync_delay_s << "\n";
     os << "  planar_only:          " << yn(hc.wheel.planar_only) << "\n";
     os << "  estimate_scale:       " << yn(hc.wheel.estimate_scale) << "\n";
+    os << "  slip_gate_factors:    " << yn(hc.slip_gate_factors) << "\n";
     if (hc.wheel.estimate_scale) {
       os << "  scale_prior_sigma:    " << hc.wheel.scale_prior_sigma << "\n";
     }
@@ -206,13 +207,17 @@ inline void printConfigOverview(const Config& config) {
      << (hc.registration_metrics_path.empty() ? "<none>" : hc.registration_metrics_path) << "\n";
   os << "  wheel_slip_path:      "
      << (hc.wheel_slip_path.empty() ? "<none>" : hc.wheel_slip_path) << "\n";
-  if (!hc.wheel_slip_path.empty()) {
-    os << "slip monitor (hard interval gate):\n";
+  os << "  odometry_twist_path:  "
+     << (hc.odometry_twist_path.empty() ? "<none>" : hc.odometry_twist_path) << "\n";
+  if (hc.wheel.enabled) {
+    os << "slip monitor (" << (hc.slip_gate_factors ? "hard interval gate" : "ungated ablation")
+       << "):\n";
     os << "  abs_threshold_mps:    " << hc.slip.abs_threshold_mps << "\n";
     os << "  rel_threshold:        " << hc.slip.rel_threshold << "\n";
     os << "  wz_threshold_rps:     " << hc.slip.wz_threshold_rps << "\n";
     os << "  suspect_abs_mps:      " << hc.slip.suspect_abs_mps << "\n";
     os << "  suspect_rel:          " << hc.slip.suspect_rel << "\n";
+    os << "  suspect_wz_rps:       " << hc.slip.suspect_wz_rps << "\n";
     os << "  lidar_velocity_window_frames: " << hc.slip.lidar_velocity_window_frames << "\n";
     os << "  high_window_frames:   " << hc.slip.high_window_frames << "\n";
     os << "  high_votes_required:  " << hc.slip.high_votes_required << "\n";
@@ -331,6 +336,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.wheel.planar_only = yaml.get<bool>("wheel", "planar_only", hc.wheel.planar_only);
   hc.wheel.estimate_scale =
       yaml.get<bool>("wheel", "estimate_scale", hc.wheel.estimate_scale);
+  hc.slip_gate_factors =
+      yaml.get<bool>("wheel", "slip_gate_factors", hc.slip_gate_factors);
   if (!config_internal::getPositive(yaml, "wheel", "sigma_v", hc.wheel.sigma_v,
                                     hc.wheel.sigma_v) ||
       !config_internal::getPositive(yaml, "wheel", "max_sync_delay_s",
@@ -339,8 +346,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
                                     hc.wheel.scale_prior_sigma, hc.wheel.scale_prior_sigma)) {
     return false;
   }
-  // Slip monitor thresholds (v2 log-only; calibrate on flooded-site data
-  // before using them to gate anything). Keep the old n_high_frames key as a
+  // Slip monitor thresholds. Wheel factors are gated to NORMAL; these values
+  // are simulation first guesses. Keep the old n_high_frames key as a
   // compatibility alias for high_votes_required so existing run configs do
   // not silently change behaviour.
   if (!config_internal::getPositive(yaml, "wheel", "slip_abs_threshold_mps",
@@ -409,6 +416,7 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   hc.registration_metrics_path =
       yaml.get<std::string>("debug", "registration_metrics_path", "");
   hc.wheel_slip_path = yaml.get<std::string>("debug", "wheel_slip_path", "");
+  hc.odometry_twist_path = yaml.get<std::string>("debug", "odometry_twist_path", "");
 
   // --- dashboard (live status print) ---
   hc.print_dashboard = yaml.get<bool>("debug", "dashboard", false);

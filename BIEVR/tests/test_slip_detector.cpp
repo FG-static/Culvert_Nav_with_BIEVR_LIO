@@ -20,6 +20,16 @@ SlipDetectionInput makeInput(double wheel_x, double lidar_x, double dt = 0.1) {
   return input;
 }
 
+SlipDetectionInput makeYawInput(double wheel_wz, double gyro_wz, double dt = 0.1) {
+  SlipDetectionInput input;
+  input.dt = dt;
+  input.wheel_v = bievr::V3(0.5, 0.0, 0.0);
+  input.lidar_v = bievr::V3(0.5, 0.0, 0.0);
+  input.wheel_wz = wheel_wz;
+  input.gyro_wz = gyro_wz;
+  return input;
+}
+
 void expect(bool condition, const std::string& message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -130,6 +140,65 @@ void testLowSpeedAbsoluteCheckStillWorks() {
          "absolute residual must still detect a meaningful low-speed disagreement");
 }
 
+void testYawNoiseDoesNotBecomeSuspect() {
+  SlipConfig config;
+  config.lidar_velocity_window_frames = 1;
+  SlipDetector detector(config);
+
+  for (int i = 0; i < 5; ++i) {
+    const auto output = detector.update(makeYawInput(0.05, 0.0));
+    expect(output.state == SlipState::Normal, "small yaw disagreement must remain NORMAL");
+  }
+}
+
+void testYawSuspectWithoutHighVote() {
+  SlipConfig config;
+  config.lidar_velocity_window_frames = 1;
+  config.high_window_frames = 5;
+  config.high_votes_required = 3;
+  SlipDetector detector(config);
+
+  const auto output = detector.update(makeYawInput(0.18, 0.0));
+  expect(output.state == SlipState::Suspect,
+         "yaw residual between low and high must enter SUSPECT");
+  expect(output.high_votes == 0, "yaw below the high threshold must not count as a high vote");
+}
+
+void testThreeOfFiveHighYawFramesEnterSlip() {
+  SlipConfig config;
+  config.lidar_velocity_window_frames = 1;
+  config.high_window_frames = 5;
+  config.high_votes_required = 3;
+  SlipDetector detector(config);
+
+  detector.update(makeYawInput(0.5, 0.0));
+  detector.update(makeYawInput(0.5, 0.0));
+  detector.update(makeYawInput(0.0, 0.0));
+  detector.update(makeYawInput(0.5, 0.0));
+  const auto output = detector.update(makeYawInput(0.0, 0.0));
+
+  expect(output.high_votes == 3, "K-of-N vote must count three high yaw frames");
+  expect(output.state == SlipState::Slip, "three of five high yaw frames must enter SLIP");
+}
+
+void testYawSlipRecoveryHysteresis() {
+  SlipConfig config;
+  config.lidar_velocity_window_frames = 1;
+  config.high_window_frames = 1;
+  config.high_votes_required = 1;
+  config.recover_time_s = 0.25;
+  SlipDetector detector(config);
+
+  const auto slip = detector.update(makeYawInput(0.5, 0.0));
+  expect(slip.state == SlipState::Slip, "a single high yaw frame must enter SLIP for K=N=1");
+
+  const auto recovering = detector.update(makeYawInput(0.0, 0.0, 0.1));
+  expect(recovering.state == SlipState::Recovering, "quiet yaw must start RECOVERING");
+  detector.update(makeYawInput(0.0, 0.0, 0.1));
+  const auto normal = detector.update(makeYawInput(0.0, 0.0, 0.1));
+  expect(normal.state == SlipState::Normal, "quiet yaw for recover_time_s must return NORMAL");
+}
+
 }  // namespace
 
 int main() {
@@ -139,6 +208,10 @@ int main() {
   testTwoOfFiveHighFramesDoNotEnterSlip();
   testSlipRecoveryHysteresis();
   testLowSpeedAbsoluteCheckStillWorks();
+  testYawNoiseDoesNotBecomeSuspect();
+  testYawSuspectWithoutHighVote();
+  testThreeOfFiveHighYawFramesEnterSlip();
+  testYawSlipRecoveryHysteresis();
   std::cout << "SlipDetector tests passed\n";
   return EXIT_SUCCESS;
 }

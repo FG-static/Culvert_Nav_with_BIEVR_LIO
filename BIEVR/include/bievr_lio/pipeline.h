@@ -39,9 +39,14 @@ class Pipeline {
     std::string registration_metrics_path = "";
     // Optional per-frame CSV with wheel-slip consistency diagnostics. Empty
     // disables the log file; slip monitoring still runs whenever wheel fusion is
-    // enabled and gates wheel factors to NORMAL intervals only. Implies
-    // registration.collect_diagnostics, like registration_metrics_path.
+    // enabled. Implies registration.collect_diagnostics, like registration_metrics_path.
     std::string wheel_slip_path = "";
+    // When true (default), wheel factors are added only in SlipState::Normal.
+    // Set false to fuse every valid wheel interval for ungated ablations.
+    bool slip_gate_factors = true;
+    // Optional per-frame CSV of the published body-frame twist after the inertial
+    // window solve. Empty disables it.
+    std::string odometry_twist_path = "";
 
     size_t min_points_for_map_init = 100;
     size_t map_size_running_threshold = 5;
@@ -120,6 +125,8 @@ class Pipeline {
   void writeSlipLogHeader();
   void logSlip(uint64_t stamp_ns, uint32_t frame_id, double dt_s,
                const SlipDetectionInput& input, const SlipDetectionOutput& output);
+  void writeOdometryTwistHeader();
+  void logOdometryTwist(uint64_t stamp_ns);
   SlipDetectionInput buildSlipInput(const WheelIntegrator& wheel_integrator,
                                     const State& state_i, const State& state_j,
                                     const V3& imu_pred_v, const std::vector<ImuMeasurement>& imu,
@@ -142,6 +149,7 @@ class Pipeline {
   // be constructed from config_.slip in the constructor's init list.
   SlipDetector slip_detector_;
   std::shared_ptr<std::ofstream> slip_log_;
+  std::shared_ptr<std::ofstream> odometry_twist_log_;
 
   size_t seq_counter_ = 0;
   Phase phase_ = Phase::NeedBias;

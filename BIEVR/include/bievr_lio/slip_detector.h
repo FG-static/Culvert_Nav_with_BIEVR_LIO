@@ -17,24 +17,26 @@ enum class SlipState {
   Recovering = 3,
 };
 
-// Thresholds and hysteresis. Defaults are first guesses for a small
-// differential-drive robot; before any of this gates the fusion, the
-// thresholds must be re-calibrated from flooded-site bags.
+// Thresholds and hysteresis. Defaults are simulation first guesses for a
+// small differential-drive robot.
 struct SlipConfig {
-  // High thresholds. A frame is high when BOTH |r_x| > abs_threshold_mps AND
-  // |r_x|/v_ref > rel_threshold (when the relative check is active); the dual
-  // condition prevents the relative ratio from firing at near-zero speed.
+  // Translation high thresholds. The translation channel is high when BOTH
+  // |r_x| > abs_threshold_mps AND |r_x|/v_ref > rel_threshold (when the
+  // relative check is active); the dual condition prevents the relative ratio
+  // from firing at near-zero speed.
   double abs_threshold_mps = 0.20;
   double rel_threshold = 0.35;
-  // High threshold of the yaw-rate channel. Contributes to the score only;
-  // the state machine keys on r_x alone (the wz channel needs sigma
-  // calibration against real slip data first).
-  double wz_threshold_rps = 0.30;
-  // Low thresholds: entering SUSPECT needs either exceeded; recovering
-  // requires both below for recover_time_s.
+  // High threshold of the yaw-rate channel |wheel_wz - gyro_wz|. A frame is
+  // high if the translation test fires OR this yaw test fires, so one-sided
+  // differential-drive slip can enter SLIP without a large r_x. Simulation
+  // first guess: ~0.5 rad/s injection is clearly above this, clean-bag |r_wz|
+  // is ~0.
+  double wz_threshold_rps = 0.25;
+  // Low thresholds: entering SUSPECT needs any channel exceeded; recovering
+  // requires every channel below for recover_time_s.
   double suspect_abs_mps = 0.12;
   double suspect_rel = 0.20;
-  double suspect_wz_rps = 0.18;
+  double suspect_wz_rps = 0.12;
   // LiDAR velocity is obtained by differentiating consecutive registered
   // poses, so a short time-weighted history suppresses single-frame spikes.
   int lidar_velocity_window_frames = 3;
@@ -87,9 +89,10 @@ struct SlipDetectionOutput {
 // odometry against the fused trajectory (translation) and the gyro (yaw
 // rate), normalizes the residuals by the configured thresholds, and runs a
 // hysteresis state machine:
-//   NORMAL --(low exceeded)--> SUSPECT --(K-of-N dual-high vote)--> SLIP
-//   SLIP --(both r_x below low)--> RECOVERING --(low for recover_time_s)--> NORMAL
-//   RECOVERING --(dual-high again)--> SLIP
+//   NORMAL --(any low exceeded)--> SUSPECT --(K-of-N high vote)--> SLIP
+//   SLIP --(all channels below low)--> RECOVERING --(low for recover_time_s)--> NORMAL
+//   RECOVERING --(high vote again)--> SLIP
+// A high frame is translation dual-high OR |r_wz| above wz_threshold_rps.
 class SlipDetector {
  public:
   SlipDetector() = delete;
@@ -108,12 +111,16 @@ class SlipDetector {
   bool relativeSpeedActive(const SlipDetectionInput& input) const;
   double speedReference(const SlipDetectionInput& input) const;
   double relativeResidual(const SlipDetectionInput& input, double residual) const;
-  // SUSPECT-entry condition: either low threshold exceeded.
-  bool aboveLowX(const SlipDetectionInput& input) const;
-  // Fully quiet: both low thresholds strictly below.
-  bool belowLowX(const SlipDetectionInput& input) const;
-  // SLIP-entry condition: absolute AND relative high thresholds both exceeded.
+  double yawResidual(const SlipDetectionInput& input) const;
+  // SUSPECT-entry: any low threshold exceeded (translation or yaw).
+  bool aboveLow(const SlipDetectionInput& input) const;
+  // Fully quiet: translation and yaw all below their low thresholds.
+  bool belowLow(const SlipDetectionInput& input) const;
+  // Translation SLIP-entry: absolute AND relative high thresholds both exceeded.
   bool aboveHighX(const SlipDetectionInput& input) const;
+  // Yaw SLIP-entry: |r_wz| above the high yaw threshold.
+  bool aboveHighWz(const SlipDetectionInput& input) const;
+  bool aboveHigh(const SlipDetectionInput& input) const;
 
   SlipConfig config_;
   SlipState state_ = SlipState::Normal;

@@ -340,28 +340,29 @@ synchronizer waits for a wheel sample at or after the LiDAR frame end, then
 falls back to LiDAR/IMU-only processing if the wheel stream is late. When
 enabled, the dashboard reports the wheel residual RMS and the estimated scale.
 
-### Wheel slip monitor (log-only)
+### Wheel slip monitor
 
-When `debug.wheel_slip_path` points to a CSV file, a per-frame slip monitor
-runs alongside the fusion. It compares the wheel interval displacement against
-the fused trajectory (`r_x`, `r_y`) and the wheel yaw rate against the gyro
-(`r_wz`), logs the forward-direction translation information
-`e_x^T·Htt·e_x/N_eff` and the translation degeneracy ratio from the scan
-matcher, and runs a hysteresis state machine
-(`NORMAL → SUSPECT → SLIP → RECOVERING`): the LiDAR velocity is a short,
-time-weighted history controlled by `slip_lidar_velocity_window_frames`; SLIP
-needs `slip_high_votes_required` high residual frames within the sliding
-`slip_high_window_frames` window. A high frame requires both `|r_x|` and
-`|r_x|/v_ref` to exceed their thresholds, except that the relative check is
-disabled below `slip_relative_min_speed_mps` (the absolute check remains
-active). Recovery needs both residuals below the low thresholds for
-`slip_recover_time_s`. Thresholds live in `config/params.yaml` under
-`wheel:slip_*` and **must be recalibrated from flooded-site bags before being
-used to gate the fusion**. The
-`suggested_wheel_weight` column is a log-only hint (1 below SLIP level,
-ramping to 0 by twice that level) for a future gating policy; nothing is
-gated in this version. A `tools/inject_wheel_slip.py` helper synthesizes slip
-into an existing bag for validation.
+When wheel fusion is enabled, a per-frame slip monitor compares the wheel
+interval displacement against the fused trajectory (`r_x`, `r_y`) and the
+wheel yaw rate against the gyro (`r_wz`). Wheel velocity factors are added
+only while the state machine reads `NORMAL`; `SUSPECT` / `SLIP` /
+`RECOVERING` skip the current interval but leave already-accepted window
+history in place. Optional CSV logging is enabled by `debug.wheel_slip_path`.
+
+The hysteresis is `NORMAL → SUSPECT → SLIP → RECOVERING`. LiDAR velocity is a
+short, time-weighted history controlled by `slip_lidar_velocity_window_frames`.
+A high frame is either translation dual-high (`|r_x|` and `|r_x|/v_ref`, with
+the relative check disabled below `slip_relative_min_speed_mps`) **or**
+`|r_wz|` above `slip_wz_threshold_rps`. SLIP needs
+`slip_high_votes_required` high frames within the sliding
+`slip_high_window_frames` window. Recovery needs translation and yaw residuals
+all below their low thresholds for `slip_recover_time_s`. Thresholds live in
+`config/params.yaml` under `wheel:slip_*` and are simulation first guesses.
+
+The `suggested_wheel_weight` column is a log-only hint (1 below SLIP level,
+ramping to 0 by twice that level); it is not applied as a soft constraint. A
+`tools/inject_wheel_slip.py` helper synthesizes linear and yaw slip into an
+existing bag for validation.
 
 The legacy `slip_n_high_frames` key is accepted as an alias for
 `slip_high_votes_required`; new configurations should use the explicit

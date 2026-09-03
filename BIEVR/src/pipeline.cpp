@@ -46,7 +46,10 @@ Pipeline::Pipeline(const Config& config) : config_(config), slip_detector_(confi
       LOG(W, "Wheel slip logging requested but wheel odometry is disabled; "
              "the slip log will stay empty.");
     }
-    LOG(I, "Wheel slip logging to " << config_.wheel_slip_path);
+    LOG(I, "Wheel slip logging to " << config_.wheel_slip_path
+                                    << (config_.slip_gate_factors
+                                            ? " (gating wheel factors to NORMAL)"
+                                            : " (ungated ablation, all wheel factors kept)"));
     slip_log_ = std::make_shared<std::ofstream>(config_.wheel_slip_path, std::ios::trunc);
     if (!slip_log_->is_open()) {
       LOG(E, "Error opening wheel slip log file '" << config_.wheel_slip_path
@@ -56,6 +59,18 @@ Pipeline::Pipeline(const Config& config) : config_(config), slip_detector_(confi
       // The Htt information metrics come from the registration diagnostics.
       config_.registration.collect_diagnostics = true;
       writeSlipLogHeader();
+    }
+  }
+
+  if (!config_.odometry_twist_path.empty()) {
+    LOG(I, "Odometry twist logging to " << config_.odometry_twist_path);
+    odometry_twist_log_ =
+        std::make_shared<std::ofstream>(config_.odometry_twist_path, std::ios::trunc);
+    if (!odometry_twist_log_->is_open()) {
+      LOG(E, "Error opening odometry twist log file '" << config_.odometry_twist_path << "'.");
+      odometry_twist_log_.reset();
+    } else {
+      writeOdometryTwistHeader();
     }
   }
 
@@ -227,7 +242,8 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
       logSlip(header.stamp, header.seq, slip_dt_s, slip_input, slip_output);
     }
   }
-  const bool wheel_factors_allowed = slip_output.state == SlipState::Normal;
+  const bool wheel_factors_allowed =
+      !config_.slip_gate_factors || slip_output.state == SlipState::Normal;
 
   timing::Timer imu_opt("07_imu_opt");
   if (map_->size() > config_.min_map_size_for_imu_opt) {
@@ -238,6 +254,10 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
   }
   optimizeInertialWindow();
   imu_opt.Stop();
+
+  if (odometry_twist_log_) {
+    logOdometryTwist(header.stamp);
+  }
 
   // Publish results
   timing::Timer pub_time("08_publish");
@@ -740,6 +760,25 @@ void Pipeline::logSlip(uint64_t stamp_ns, uint32_t frame_id, double dt_s,
       << input.htt_degeneracy_ratio << ',' << input.n_effective_points << ',' << output.score << ','
       << static_cast<int>(output.state) << ',' << output.suggested_weight << '\n';
   // Preserve the last row even if a run terminates early.
+  out.flush();
+}
+
+void Pipeline::writeOdometryTwistHeader() {
+  if (!odometry_twist_log_ || !odometry_twist_log_->is_open()) return;
+  std::ofstream& out = *odometry_twist_log_;
+  out << "stamp_ns,stamp_s,vx,vy,vz,wx,wy,wz\n";
+  out.flush();
+}
+
+void Pipeline::logOdometryTwist(uint64_t stamp_ns) {
+  if (!odometry_twist_log_ || !odometry_twist_log_->is_open() || states_.empty()) return;
+  const State& latest_state = states_.rbegin()->second;
+  const V3 v_body = latest_state.quat.conjugate() * latest_state.v;
+  std::ofstream& out = *odometry_twist_log_;
+  out << std::setprecision(9);
+  out << stamp_ns << ',' << nsToS(stamp_ns) << ',' << v_body.x() << ',' << v_body.y() << ','
+      << v_body.z() << ',' << latest_gyro_.x() << ',' << latest_gyro_.y() << ',' << latest_gyro_.z()
+      << '\n';
   out.flush();
 }
 
