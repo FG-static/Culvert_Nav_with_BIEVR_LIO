@@ -546,14 +546,23 @@ void Pipeline::publishLatestState(const Header& header) {
     return;
   }
 
-  const State& latest_state = states_.rbegin()->second;
+  const State& state = states_.rbegin()->second;
+
+  // Internal state is the IMU pose/velocity. Publish T_W_B and the twist of B
+  // expressed in B, so Nav2 can consume odom -> base_footprint without rotating
+  // the LiDAR-IMU calibration.
+  const Transform T_W_I(state.quat, state.p);
+  const Transform T_W_B = T_W_I * config_.T_I_B;
+  const Rotation R_B_I = config_.T_I_B.rotation().transpose();
+
+  const V3 velocity_I = state.quat.conjugate() * state.v;
+  const V3 velocity_at_B_I =
+      velocity_I + latest_gyro_.cross(config_.T_I_B.translation());
+
   Odometry odom;
-  odom.pose = Transform(latest_state.quat, latest_state.p);
-  // The state velocity is expressed in the world frame; rotate it into the body
-  // frame so it matches the odometry message's child frame. The angular velocity
-  // comes straight from the latest gyro measurement (already in the body frame).
-  odom.linear_velocity = latest_state.quat.conjugate() * latest_state.v;
-  odom.angular_velocity = latest_gyro_;
+  odom.pose = T_W_B;
+  odom.linear_velocity = R_B_I * velocity_at_B_I;
+  odom.angular_velocity = R_B_I * latest_gyro_;
   publish(odom, header, "odom", config_.body_frame);
   publish(acc_bias_, header, "bias/acc");
   publish(gyro_bias_, header, "bias/gyro");

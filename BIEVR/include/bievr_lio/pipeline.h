@@ -31,6 +31,9 @@ class Pipeline {
     // Path to the ASCII art shown at the top of the dashboard (e.g. bievr_ascii.txt).
     std::string dashboard_ascii_path = "";
     Transform T_I_L = Transform::Identity();  // Transform from LiDAR to IMU frame
+    // Transform from the published odometry child frame (imu.frame, e.g.
+    // base_footprint) into the IMU frame. Identity when they coincide.
+    Transform T_I_B = Transform::Identity();
     std::string map_frame = "map";
     std::string body_frame = "body";
     std::string log_path = "";

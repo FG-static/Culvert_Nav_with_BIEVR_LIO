@@ -227,6 +227,8 @@ inline void printConfigOverview(const Config& config) {
   }
   os << "calibration (LiDAR -> IMU):\n";
   printExtrinsic(os, "T_I_L", hc.T_I_L);
+  os << "calibration (odometry child -> IMU):\n";
+  printExtrinsic(os, "T_I_B", hc.T_I_B);
   if (hc.wheel.enabled) {
     os << "calibration (wheel-odometry child -> IMU):\n";
     printExtrinsic(os, "T_I_W", hc.wheel.T_I_W);
@@ -326,7 +328,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   // Accelerometer normalization, resolved during bias estimation:
   //   < 0 autodetect, = 0 not normalized, > 0 normalized (multiplied by g)
   hc.imu.normalized = yaml.get<double>("imu", "normalized", -1.0);
-  // The IMU frame is the body (child) frame of the published odometry.
+  // Name of the published odometry child frame. Internal state stays in the
+  // IMU frame; T_I_B maps IMU -> this frame on output (identity if omitted).
   hc.body_frame = yaml.get<std::string>("imu", "frame", hc.body_frame);
 
   // --- wheel odometry (velocity factor in the inertial window) ---
@@ -453,6 +456,18 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
           yaml.get<std::vector<double>>("calibration", "translation", {}),
           yaml.get<std::vector<double>>("calibration", "rotation", {}), "calibration", hc.T_I_L)) {
     return false;
+  }
+  // --- body_calibration (odometry child -> IMU). Optional: identity when
+  // the section is absent, hard error when half-supplied. ---
+  const std::vector<double> body_t_vec =
+      yaml.get<std::vector<double>>("body_calibration", "translation", {});
+  const std::vector<double> body_R_vec =
+      yaml.get<std::vector<double>>("body_calibration", "rotation", {});
+  if (!body_t_vec.empty() || !body_R_vec.empty()) {
+    if (!config_internal::extrinsicFromVectors(body_t_vec, body_R_vec, "body_calibration",
+                                               hc.T_I_B)) {
+      return false;
+    }
   }
 
   // --- threading (top-level, process-wide) ---

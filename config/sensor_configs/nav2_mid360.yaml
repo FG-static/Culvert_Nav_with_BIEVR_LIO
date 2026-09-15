@@ -1,0 +1,40 @@
+topics:
+  pointcloud: "/livox/lidar"
+  imu: "/livox/imu"
+
+# T_IMU_LIDAR：Mid360 点云原点到内置 IMU
+calibration:
+  translation: [-0.011, -0.02329, 0.04412]
+  rotation: [1, 0, 0,
+             0, 1, 0,
+             0, 0, 1]
+
+# T_IMU_BASE_FOOTPRINT：内部仍在 Mid360 IMU 系运算，发布 odom -> base_footprint。
+body_calibration:
+  translation: [0.069936798, -0.028056426, -0.426700000]
+  rotation: [-0.999591048, -0.028596101, 0,
+              0.028596101, -0.999591048, 0,
+              0,            0,           1]
+
+lidar:
+  min_range_m: 0.2
+  max_range_m: 11.5
+  assume_simultaneous_points: false
+
+map:
+  frame: "odom"
+
+imu:
+  normalized: 0.0
+  frame: "base_footprint"
+
+wheel:
+  enabled: false
+
+# If wheel fusion is enabled and the wheel-odometry child frame is
+# base_footprint, use the same T_IMU_BASE_FOOTPRINT:
+# wheel_calibration:
+#   translation: [0.069936798, -0.028056426, -0.426700000]
+#   rotation: [-0.999591048, -0.028596101, 0,
+#               0.028596101, -0.999591048, 0,
+#               0,            0,           1]
