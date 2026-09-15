@@ -41,7 +41,10 @@ void evaluateResidual(const ResidualData& data, const V3& v_i, const V3& v_j, do
     residual.z() = 0.0;
     if (jac_v_i) Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(jac_v_i).row(2).setZero();
     if (jac_v_j) Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(jac_v_j).row(2).setZero();
-    if (jac_scale) Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>>(jac_scale)(2) = 0.0;
+    if (jac_scale) {
+      Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac(jac_scale);
+      jac(2) = 0.0;
+    }
   }
 }
 

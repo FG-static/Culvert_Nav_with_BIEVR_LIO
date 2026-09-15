@@ -106,8 +106,8 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
     return;
   }
 
-  // Cache the latest gyro reading so the odometry twist can report the current
-  // angular velocity (already expressed in the body/IMU frame).
+  // Cache the latest raw gyro reading. The estimated bias is removed when the
+  // body-frame odometry twist is formed.
   latest_gyro_ = imu_data.back().gyro;
 
   // Remove points outside of intended range
@@ -213,6 +213,7 @@ void Pipeline::processFrame(const std::vector<ImuMeasurement>& imu_data,
     V3 mean_gyro = V3::Zero();
     for (const auto& imu_meas : imu) mean_gyro += imu_meas.gyro;
     mean_gyro /= static_cast<double>(imu.size());
+    mean_gyro -= gyro_bias_;
     wheel_integrator = std::make_shared<WheelIntegrator>(config_.wheel, states_.rbegin()->first,
                                                          imu.back().stamp);
     // Add wheel measurements to the integrator and finalize it.
@@ -491,8 +492,22 @@ bool Pipeline::optimizeInertialWindow() {
       problem.AddResidualBlock(scale_prior_cost, loss_function, wheel_scale_.data());
     }
 
-    // Post-solve residual RMS for the dashboard, evaluated with the optimized
-    // velocities (and scale). Weight 1 keeps the value in physical m/s.
+  }
+
+  // Add constant prior to add some rigidity to the optimization problem and prevent gravity from
+  // drifting
+  ceres::CostFunction* prior_cost_function =
+      new PriorFactor(gravity_dir_, config_.gravity_prior_weight);
+  problem.AddResidualBlock(prior_cost_function, loss_function, gravity_dir_.data());
+  ceres::Manifold* gravity_manifold = new ceres::SphereManifold<3>();
+  problem.SetManifold(gravity_dir_.data(), gravity_manifold);
+
+  ceres::Solver::Summary summary;
+  ceres::Solve(options, &problem, &summary);
+
+  // Post-solve residual RMS for the dashboard, evaluated with the optimized
+  // velocities (and scale). Weight 1 keeps the value in physical m/s.
+  if (config_.wheel.enabled && !wheel_integrators_.empty()) {
     size_t n_residual_rows = 0;
     double squared_sum = 0.0;
     for (const auto& integrator_it : wheel_integrators_) {
@@ -514,17 +529,6 @@ bool Pipeline::optimizeInertialWindow() {
     }
   }
 
-  // Add constant prior to add some rigidity to the optimization problem and prevent gravity from
-  // drifting
-  ceres::CostFunction* prior_cost_function =
-      new PriorFactor(gravity_dir_, config_.gravity_prior_weight);
-  problem.AddResidualBlock(prior_cost_function, loss_function, gravity_dir_.data());
-  ceres::Manifold* gravity_manifold = new ceres::SphereManifold<3>();
-  problem.SetManifold(gravity_dir_.data(), gravity_manifold);
-
-  ceres::Solver::Summary summary;
-  ceres::Solve(options, &problem, &summary);
-
   return true;
 }
 
@@ -540,12 +544,7 @@ void Pipeline::publishFrame(const Header& header, const Transform& T_W_I,
   publishLatestState(header);
 }
 
-void Pipeline::publishLatestState(const Header& header) {
-  if (states_.empty()) {
-    LOG(W, "No states to publish.");
-    return;
-  }
-
+Odometry Pipeline::latestBodyOdometry() const {
   const State& state = states_.rbegin()->second;
 
   // Internal state is the IMU pose/velocity. Publish T_W_B and the twist of B
@@ -555,14 +554,25 @@ void Pipeline::publishLatestState(const Header& header) {
   const Transform T_W_B = T_W_I * config_.T_I_B;
   const Rotation R_B_I = config_.T_I_B.rotation().transpose();
 
+  const V3 angular_velocity_I = latest_gyro_ - gyro_bias_;
   const V3 velocity_I = state.quat.conjugate() * state.v;
   const V3 velocity_at_B_I =
-      velocity_I + latest_gyro_.cross(config_.T_I_B.translation());
+      velocity_I + angular_velocity_I.cross(config_.T_I_B.translation());
 
   Odometry odom;
   odom.pose = T_W_B;
   odom.linear_velocity = R_B_I * velocity_at_B_I;
-  odom.angular_velocity = R_B_I * latest_gyro_;
+  odom.angular_velocity = R_B_I * angular_velocity_I;
+  return odom;
+}
+
+void Pipeline::publishLatestState(const Header& header) {
+  if (states_.empty()) {
+    LOG(W, "No states to publish.");
+    return;
+  }
+
+  const Odometry odom = latestBodyOdometry();
   publish(odom, header, "odom", config_.body_frame);
   publish(acc_bias_, header, "bias/acc");
   publish(gyro_bias_, header, "bias/gyro");
@@ -581,9 +591,12 @@ void Pipeline::publishDebugClouds(const Pointcloud& source_filtered,
   publish(source_registered, header, "points/effective");
   Header body_header = header;
   body_header.frame = config_.body_frame;
-  // The undistorted cloud keeps its original point order, so the snapshotted
-  // intensity row still lines up with it.
-  publish(IntensityPointcloud(undistorted_cloud, intensities), body_header, "points/undistorted");
+  // The undistorted cloud is computed in the IMU frame. Transform it into the
+  // configured odometry child frame before assigning that frame_id. Point order
+  // is unchanged, so the snapshotted intensity row still lines up with it.
+  const Transform T_B_I(config_.T_I_B.inverse());
+  const Pointcloud undistorted_body = transformPoints(T_B_I, undistorted_cloud);
+  publish(IntensityPointcloud(undistorted_body, intensities), body_header, "points/undistorted");
 }
 
 void Pipeline::logTUM(double timestamp, const Transform& pose) {
@@ -781,13 +794,13 @@ void Pipeline::writeOdometryTwistHeader() {
 
 void Pipeline::logOdometryTwist(uint64_t stamp_ns) {
   if (!odometry_twist_log_ || !odometry_twist_log_->is_open() || states_.empty()) return;
-  const State& latest_state = states_.rbegin()->second;
-  const V3 v_body = latest_state.quat.conjugate() * latest_state.v;
+  const Odometry odom = latestBodyOdometry();
   std::ofstream& out = *odometry_twist_log_;
   out << std::setprecision(9);
-  out << stamp_ns << ',' << nsToS(stamp_ns) << ',' << v_body.x() << ',' << v_body.y() << ','
-      << v_body.z() << ',' << latest_gyro_.x() << ',' << latest_gyro_.y() << ',' << latest_gyro_.z()
-      << '\n';
+  out << stamp_ns << ',' << nsToS(stamp_ns) << ',' << odom.linear_velocity.x() << ','
+      << odom.linear_velocity.y() << ',' << odom.linear_velocity.z() << ','
+      << odom.angular_velocity.x() << ',' << odom.angular_velocity.y() << ','
+      << odom.angular_velocity.z() << '\n';
   out.flush();
 }
 

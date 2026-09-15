@@ -430,7 +430,8 @@ bool msgToWheelMeasurement(const OdomMsgT& odom_msg, WheelMeasurement& wheel) {
   // deliberately ignored (the LIO provides its own pose).
   wheel.v_body << odom_msg.twist.twist.linear.x, odom_msg.twist.twist.linear.y,
       odom_msg.twist.twist.linear.z;
-  wheel.yaw_rate = odom_msg.twist.twist.angular.z;
+  wheel.angular_velocity_body << odom_msg.twist.twist.angular.x,
+      odom_msg.twist.twist.angular.y, odom_msg.twist.twist.angular.z;
 
   return true;
 }

@@ -18,6 +18,9 @@ class Synchronizer {
   bool addImu(const ImuMeasurement& imu);
   bool addPointcloud(const StampedIntensityPointcloud& cloud);
   bool addWheelOdometry(const WheelMeasurement& wheel);
+  // Process every frame that has sufficient IMU coverage without waiting for
+  // another wheel watermark. Intended for offline readers at end-of-bag.
+  void flush();
 
  private:
   void synchronizeData();
@@ -27,7 +30,7 @@ class Synchronizer {
   // Last wheel sample handed to a frame, prepended to the next slice so the
   // WheelIntegrator can bridge the interval start by trapezoid instead of
   // holding the first in-interval velocity.
-  WheelMeasurement last_wheel_ = WheelMeasurement{0, V3::Zero(), 0.0};
+  WheelMeasurement last_wheel_ = WheelMeasurement{0, V3::Zero(), V3::Zero()};
   bool has_last_wheel_ = false;
   bool wheel_input_enabled_ = false;
   uint64_t wheel_max_sync_delay_ns_ = 0;

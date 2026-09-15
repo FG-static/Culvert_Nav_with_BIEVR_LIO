@@ -329,7 +329,8 @@ inline bool loadConfigFromYaml(const std::vector<std::string>& yaml_paths, Confi
   //   < 0 autodetect, = 0 not normalized, > 0 normalized (multiplied by g)
   hc.imu.normalized = yaml.get<double>("imu", "normalized", -1.0);
   // Name of the published odometry child frame. Internal state stays in the
-  // IMU frame; T_I_B maps IMU -> this frame on output (identity if omitted).
+  // IMU frame; T_I_B maps this frame -> IMU and is applied on output
+  // (identity if omitted).
   hc.body_frame = yaml.get<std::string>("imu", "frame", hc.body_frame);
 
   // --- wheel odometry (velocity factor in the inertial window) ---

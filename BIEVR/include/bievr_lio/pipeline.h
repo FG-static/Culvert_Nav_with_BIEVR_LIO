@@ -110,6 +110,7 @@ class Pipeline {
                     const Pointcloud& source_filtered, const Pointcloud& source_coarse,
                     const Pointcloud& source_fine, const Pointcloud& undistorted,
                     const IntensityView& intensities);
+  Odometry latestBodyOdometry() const;
   void publishLatestState(const Header& header);
   void publishDebugClouds(const Pointcloud& source_filtered, const Pointcloud& source_coarse,
                           const Pointcloud& source_fine, const Pointcloud& undistorted_cloud,

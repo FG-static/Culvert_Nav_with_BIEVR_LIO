@@ -67,7 +67,8 @@ class WheelIntegrator {
   void addMeasurement(const WheelMeasurement& wheel) {
     const Rotation R_I_W = config_.T_I_W.rotation();
     const V3 v_I = R_I_W * wheel.v_body;
-    yaw_rate_sum_ += wheel.yaw_rate;
+    const V3 angular_velocity_I = R_I_W * wheel.angular_velocity_body;
+    yaw_rate_sum_ += angular_velocity_I.z();
     ++yaw_rate_count_;
     if (wheel.stamp <= t_start_) {
       if (t_start_ - wheel.stamp <= sToNs(kMaxBracketAgeS)) {

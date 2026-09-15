@@ -39,6 +39,17 @@ bool Synchronizer::addWheelOdometry(const WheelMeasurement& wheel) {
   return true;
 }
 
+void Synchronizer::flush() {
+  // No more wheel samples can arrive. Disable the wheel watermark wait and
+  // process all queued clouds for which IMU data already reaches the frame end.
+  wheel_input_enabled_ = false;
+  while (!point_queue_.empty()) {
+    const size_t queued_before = point_queue_.size();
+    synchronizeData();
+    if (point_queue_.size() == queued_before) break;
+  }
+}
+
 void Synchronizer::synchronizeData() {
   static const uint64_t kOverlapNs = sToNs(0.02);
 

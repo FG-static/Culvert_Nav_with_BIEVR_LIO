@@ -53,6 +53,11 @@ if(BUILD_TESTING)
   target_compile_features(test_slip_detector PRIVATE cxx_std_20)
   target_link_libraries(test_slip_detector PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
   add_test(NAME test_slip_detector COMMAND test_slip_detector)
+
+  add_executable(test_wheel_integrator tests/test_wheel_integrator.cpp)
+  target_compile_features(test_wheel_integrator PRIVATE cxx_std_20)
+  target_link_libraries(test_wheel_integrator PRIVATE ${PROJECT_NAME}::${PROJECT_NAME})
+  add_test(NAME test_wheel_integrator COMMAND test_wheel_integrator)
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -82,6 +87,24 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 )
 if(glog_FOUND)
   target_link_libraries(${PROJECT_NAME} PUBLIC glog::glog)
+endif()
+
+# Ceres 2.2 is often a user-prefix install (libceres.so.4), not the distro
+# package (Humble apt is 2.0 / libceres.so.2). libbievr_lio.so NEEDED-links
+# Ceres, but has no RPATH of its own. After `source /opt/ros/<distro>/setup.bash`
+# the dynamic linker prefers LD_LIBRARY_PATH and never consults the executable's
+# RUNPATH for this library, so process_topics dies with exit 127
+# ("error while loading shared libraries: libceres.so.4").
+get_target_property(_bievr_ceres_so Ceres::ceres IMPORTED_LOCATION_RELEASE)
+if(NOT _bievr_ceres_so)
+  get_target_property(_bievr_ceres_so Ceres::ceres IMPORTED_LOCATION)
+endif()
+if(_bievr_ceres_so)
+  get_filename_component(_bievr_ceres_libdir "${_bievr_ceres_so}" DIRECTORY)
+  set_target_properties(${PROJECT_NAME} PROPERTIES
+    BUILD_RPATH "${_bievr_ceres_libdir}"
+    INSTALL_RPATH "${_bievr_ceres_libdir}"
+  )
 endif()
 
 # ---------------------------------------------------------------------------

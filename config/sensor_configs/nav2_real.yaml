@@ -1,0 +1,36 @@
+topics:
+  pointcloud: "/livox/lidar"
+  imu: "/livox/imu"
+
+# T_IMU_LIDAR: transform LiDAR-frame points into the Mid360 IMU frame.
+calibration:
+  translation: [-0.011, -0.02329, 0.04412]
+  rotation: [1, 0, 0,
+             0, 1, 0,
+             0, 0, 1]
+
+# T_IMU_BASE_FOOTPRINT: keep estimation in the IMU frame while publishing
+# odom -> base_footprint for Nav2.
+body_calibration:
+  translation: [0.069936798, -0.028056426, -0.426700000]
+  rotation: [-0.999591048, -0.028596101, 0,
+              0.028596101, -0.999591048, 0,
+              0,            0,           1]
+
+lidar:
+  min_range_m: 0.2
+  max_range_m: 40.0
+  # livox_ros_driver2 PointCloud2 carries per-point relative-ns `time` fields.
+  assume_simultaneous_points: false
+
+map:
+  frame: "odom"
+
+imu:
+  # Driver variants differ on whether acceleration is emitted in g or m/s^2.
+  normalized: -1.0
+  # Nav2 consumes the odometry transform as odom -> base_footprint.
+  frame: "base_footprint"
+
+debug:
+  dashboard: false

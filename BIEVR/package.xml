@@ -10,6 +10,12 @@
 
   <buildtool_depend>cmake</buildtool_depend>
 
+  <depend>eigen</depend>
+  <!-- BIEVR requires Ceres >= 2.1 (SphereManifold/SetManifold). -->
+  <depend>libceres-dev</depend>
+  <depend>tbb</depend>
+  <depend>libgoogle-glog-dev</depend>
+
   <export>
     <build_type>cmake</build_type>
   </export>

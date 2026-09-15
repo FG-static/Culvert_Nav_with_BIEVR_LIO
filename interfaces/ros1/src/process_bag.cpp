@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
     }
   }
 
+  synchronizer.flush();
   LOG(I, "Done with for loop.");
   bag.close();
   LOG(I, "Bag closed");

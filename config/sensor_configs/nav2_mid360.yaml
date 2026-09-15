@@ -25,7 +25,9 @@ map:
   frame: "odom"
 
 imu:
-  normalized: 0.0
+  # Stock livox_ros_driver2 variants differ on whether acceleration is emitted
+  # in g or m/s^2. Autodetect from the stationary initialization window.
+  normalized: -1.0
   frame: "base_footprint"
 
 wheel:

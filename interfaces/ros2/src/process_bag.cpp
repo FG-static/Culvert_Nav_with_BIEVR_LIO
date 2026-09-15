@@ -110,6 +110,7 @@ int main(int argc, char** argv) {
     }
   }
 
+  synchronizer->flush();
   LOG(I, "Done with bag.");
   reader.close();
   LOG(I, "Bag closed");
